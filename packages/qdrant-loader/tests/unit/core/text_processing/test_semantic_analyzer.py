@@ -7,6 +7,7 @@ import pytest
 from qdrant_loader.core.text_processing.semantic_analyzer import (
     SemanticAnalysisResult,
     SemanticAnalyzer,
+    SemanticAnalyzerProvider,
 )
 
 
@@ -283,8 +284,8 @@ class TestSemanticAnalyzer:
             assert dep2["head"] == "is"
             assert dep2["children"] == ["Apple"]
 
-    def test_extract_topics_existing_model(self, mock_nlp):
-        """Test topic extraction with existing LDA model."""
+    def test_extract_topics_with_text(self, mock_nlp):
+        """Test topic extraction creates fresh models for each call."""
         with (
             patch("spacy.load", return_value=mock_nlp),
             patch(
@@ -297,26 +298,29 @@ class TestSemanticAnalyzer:
                     "business",
                 ],
             ),
+            patch(
+                "qdrant_loader.core.text_processing.semantic_analyzer.corpora.Dictionary"
+            ) as mock_dict_class,
+            patch(
+                "qdrant_loader.core.text_processing.semantic_analyzer.LdaModel"
+            ) as mock_lda_class,
         ):
-
-            analyzer = SemanticAnalyzer()
-
-            # Set up existing model and dictionary
+            # Set up mock dictionary
             mock_dict = Mock()
             mock_dict.doc2bow.return_value = [(0, 1), (1, 1)]
-            mock_dict.add_documents = Mock()
-            analyzer.dictionary = mock_dict
+            mock_dict_class.return_value = mock_dict
 
+            # Set up mock LDA model
             mock_lda = Mock()
-            mock_lda.update = Mock()
             mock_lda.print_topics.return_value = [(0, '0.5*"apple" + 0.3*"company"')]
-            analyzer.lda_model = mock_lda
+            mock_lda_class.return_value = mock_lda
 
+            analyzer = SemanticAnalyzer()
             topics = analyzer._extract_topics("Apple is a company")
 
-            # Verify existing model was updated
-            mock_dict.add_documents.assert_called_once()
-            mock_lda.update.assert_called_once()
+            # Verify fresh models were created (current implementation creates new models per call)
+            mock_dict_class.assert_called_once()
+            mock_lda_class.assert_called_once()
             assert len(topics) == 1
 
     def test_extract_key_phrases(self, mock_nlp, mock_doc):
@@ -361,7 +365,8 @@ class TestSemanticAnalyzer:
             mock_nlp.return_value = mock_doc
 
             analyzer = SemanticAnalyzer()
-            similarities = analyzer._calculate_document_similarity("Apple is a company")
+            # New signature: (doc: Doc, cache_snapshot: list)
+            similarities = analyzer._calculate_document_similarity(mock_doc, [])
 
             assert similarities == {}
 
@@ -381,9 +386,11 @@ class TestSemanticAnalyzer:
                 key_phrases=[],
                 document_similarity={},
             )
-            analyzer._doc_cache["doc1"] = cached_result
+            # Create cache snapshot with the cached document
+            cache_snapshot = [("doc1", cached_result)]
 
-            similarities = analyzer._calculate_document_similarity("Apple is a company")
+            # New signature: (doc: Doc, cache_snapshot: list)
+            similarities = analyzer._calculate_document_similarity(mock_doc, cache_snapshot)
 
             assert "doc1" in similarities
             assert isinstance(similarities["doc1"], float)
