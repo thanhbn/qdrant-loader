@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from qdrant_loader.core.document import Document
-from qdrant_loader.core.text_processing.semantic_analyzer import SemanticAnalyzer
+from qdrant_loader.core.text_processing.semantic_analyzer import (
+    SemanticAnalyzerProvider,
+)
 
 if TYPE_CHECKING:
     from qdrant_loader.config import Settings
@@ -25,8 +27,8 @@ class ChunkProcessor:
         """
         self.settings = settings
 
-        # Initialize semantic analyzer
-        self.semantic_analyzer = SemanticAnalyzer(
+        # Get shared semantic analyzer instance (singleton pattern for thread safety)
+        self.semantic_analyzer = SemanticAnalyzerProvider.get_instance(
             spacy_model=settings.global_config.semantic_analysis.spacy_model,
             num_topics=settings.global_config.semantic_analysis.num_topics,
             passes=settings.global_config.semantic_analysis.lda_passes,
@@ -171,8 +173,12 @@ class ChunkProcessor:
             self._executor.shutdown(wait=True)
             self._executor = None
 
+        # Note: We only clear the local cache, NOT shutdown the semantic analyzer
+        # because it's a shared singleton via SemanticAnalyzerProvider.
+        # The singleton will be cleaned up via SemanticAnalyzerProvider.clear_all()
+        # when the application shuts down.
         if hasattr(self, "semantic_analyzer"):
-            self.semantic_analyzer.shutdown()  # Use shutdown() instead of clear_cache() for complete cleanup
+            self.semantic_analyzer.clear_cache()
 
     def __del__(self):
         """Cleanup on deletion."""
