@@ -62,9 +62,25 @@ class PipelineComponentsFactory:
         )
         embedding_service = EmbeddingService(settings)
 
+        # Determine chunk workers count based on semantic analysis setting
+        # Note: With separate locks for spaCy and gensim operations in SemanticAnalyzer,
+        # we can now safely use multiple workers. The locks ensure thread-safe access
+        # to NLP models while allowing parallel document processing.
+        semantic_analysis_enabled = (
+            settings.global_config.chunking.strategies.default.enable_semantic_analysis
+        )
+        # Use configured workers - separate locks in SemanticAnalyzer handle thread safety
+        actual_chunk_workers = config.max_chunk_workers
+
+        if semantic_analysis_enabled:
+            logger.info(
+                "Semantic analysis enabled with thread-safe locks",
+                chunk_workers=actual_chunk_workers,
+            )
+
         # Create thread pool executor for chunking
         chunk_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=config.max_chunk_workers
+            max_workers=actual_chunk_workers
         )
         resource_manager.set_chunk_executor(chunk_executor)
 
@@ -84,7 +100,7 @@ class PipelineComponentsFactory:
         chunking_worker = ChunkingWorker(
             chunking_service=chunking_service,
             chunk_executor=chunk_executor,
-            max_workers=config.max_chunk_workers,
+            max_workers=actual_chunk_workers,  # Use reduced workers when semantic analysis enabled
             queue_size=config.queue_size,
             shutdown_event=resource_manager.shutdown_event,
         )
