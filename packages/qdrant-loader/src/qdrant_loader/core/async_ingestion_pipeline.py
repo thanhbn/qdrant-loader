@@ -5,6 +5,9 @@ from pathlib import Path
 from qdrant_loader.config import Settings, SourcesConfig
 from qdrant_loader.core.document import Document
 from qdrant_loader.core.monitoring import prometheus_metrics
+from qdrant_loader.core.text_processing.semantic_analyzer import (
+    SemanticAnalyzerProvider,
+)
 from qdrant_loader.core.monitoring.ingestion_metrics import IngestionMonitor
 from qdrant_loader.core.project_manager import ProjectManager
 from qdrant_loader.core.qdrant_manager import QdrantManager
@@ -139,6 +142,13 @@ class AsyncIngestionPipeline:
         logger.debug("Starting pipeline initialization")
 
         try:
+            # Pre-load spaCy model early to avoid timeout during batch processing
+            # This is done before other initialization to maximize model load time
+            if self.settings.global_config.chunking.strategies.default.enable_semantic_analysis:
+                spacy_model = self.settings.global_config.semantic_analysis.spacy_model
+                logger.info(f"Pre-loading spaCy model for semantic analysis: {spacy_model}")
+                SemanticAnalyzerProvider.preload_model(spacy_model)
+
             # Initialize state manager first
             if not self.state_manager.is_initialized:
                 logger.debug("Initializing state manager")
