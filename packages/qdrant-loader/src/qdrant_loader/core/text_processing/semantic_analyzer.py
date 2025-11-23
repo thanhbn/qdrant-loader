@@ -1,7 +1,6 @@
 """Semantic analysis module for text processing."""
 
 import logging
-import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,14 +29,6 @@ class SemanticAnalysisResult:
 class SemanticAnalyzer:
     """Advanced semantic analysis for text processing."""
 
-    # Separate CLASS-LEVEL LOCKS for spaCy and gensim operations
-    # Both have internal global state that's not thread-safe, but they don't
-    # share state with each other, so we can use finer-grained locking:
-    # - spaCy's vocab.strings dictionary gets modified when processing text
-    # - gensim's preprocess_string() and Dictionary/LdaModel use internal global state
-    _spacy_lock = threading.Lock()  # For all spaCy operations (nlp(), doc processing)
-    _gensim_lock = threading.Lock()  # For all gensim operations (LDA, preprocessing)
-
     def __init__(
         self,
         spacy_model: str = "en_core_web_md",
@@ -55,7 +46,7 @@ class SemanticAnalyzer:
         """
         self.logger = logging.getLogger(__name__)
 
-        # Initialize spaCy (loading is single-threaded during init)
+        # Initialize spaCy
         try:
             self.nlp = spacy.load(spacy_model)
         except OSError:
@@ -75,9 +66,6 @@ class SemanticAnalyzer:
         # Cache for processed documents
         self._doc_cache = {}
 
-        # Instance-level cache lock (for cache operations only)
-        self._cache_lock = threading.Lock()
-
     def analyze_text(
         self, text: str, doc_id: str | None = None
     ) -> SemanticAnalysisResult:
@@ -90,44 +78,30 @@ class SemanticAnalyzer:
         Returns:
             SemanticAnalysisResult containing all analysis results
         """
-        # Check cache first (thread-safe with instance lock)
-        if doc_id:
-            with self._cache_lock:
-                if doc_id in self._doc_cache:
-                    return self._doc_cache[doc_id]
+        # Check cache
+        if doc_id and doc_id in self._doc_cache:
+            return self._doc_cache[doc_id]
 
-        # Take a cache snapshot BEFORE acquiring locks to avoid nested locks.
-        # This prevents potential deadlock from acquiring _cache_lock inside _spacy_lock.
-        with self._cache_lock:
-            cache_snapshot = list(self._doc_cache.items())
+        # Process with spaCy
+        doc = self.nlp(text)
 
-        # Use separate locks for spaCy and gensim - they don't share internal state
-        # This allows finer-grained locking and better performance
+        # Extract entities with linking
+        entities = self._extract_entities(doc)
 
-        # STEP 1: All spaCy operations under spaCy lock
-        with SemanticAnalyzer._spacy_lock:
-            # Process with spaCy
-            doc = self.nlp(text)
+        # Get part-of-speech tags
+        pos_tags = self._get_pos_tags(doc)
 
-            # Extract entities with linking
-            entities = self._extract_entities(doc)
+        # Get dependency parse
+        dependencies = self._get_dependencies(doc)
 
-            # Get part-of-speech tags
-            pos_tags = self._get_pos_tags(doc)
+        # Extract topics
+        topics = self._extract_topics(text)
 
-            # Get dependency parse
-            dependencies = self._get_dependencies(doc)
+        # Extract key phrases
+        key_phrases = self._extract_key_phrases(doc)
 
-            # Extract key phrases
-            key_phrases = self._extract_key_phrases(doc)
-
-            # Calculate document similarity (pass doc to avoid duplicate nlp() call)
-            doc_similarity = self._calculate_document_similarity(doc, cache_snapshot)
-
-        # STEP 2: All gensim operations under gensim lock (separate from spaCy)
-        with SemanticAnalyzer._gensim_lock:
-            # Extract topics (gensim operations)
-            topics = self._extract_topics(text)
+        # Calculate document similarity
+        doc_similarity = self._calculate_document_similarity(text)
 
         # Create result
         result = SemanticAnalysisResult(
@@ -139,10 +113,9 @@ class SemanticAnalyzer:
             document_similarity=doc_similarity,
         )
 
-        # Cache result (thread-safe with instance lock)
+        # Cache result
         if doc_id:
-            with self._cache_lock:
-                self._doc_cache[doc_id] = result
+            self._doc_cache[doc_id] = result
 
         return result
 
@@ -240,8 +213,6 @@ class SemanticAnalyzer:
     def _extract_topics(self, text: str) -> list[dict[str, Any]]:
         """Extract topics using LDA.
 
-        NOTE: This method must be called from within _gensim_lock context.
-
         Args:
             text: Text to analyze
 
@@ -249,7 +220,6 @@ class SemanticAnalyzer:
             List of topic dictionaries
         """
         try:
-            # Already inside gensim lock context - gensim operations are protected
             # Preprocess text
             processed_text = preprocess_string(text)
 
@@ -264,22 +234,36 @@ class SemanticAnalyzer:
                     }
                 ]
 
-            # Create fresh models for each call
-            temp_dictionary = corpora.Dictionary([processed_text])
-            corpus = [temp_dictionary.doc2bow(processed_text)]
+            # If we have existing models, use and update them
+            if self.dictionary is not None and self.lda_model is not None:
+                # Add new documents to existing dictionary
+                self.dictionary.add_documents([processed_text])
 
-            # Create a fresh LDA model for this specific text
-            current_lda_model = LdaModel(
-                corpus,
-                num_topics=min(
-                    self.num_topics, len(processed_text) // 2
-                ),  # Ensure reasonable topic count
-                passes=self.passes,
-                id2word=temp_dictionary,
-                random_state=42,  # For reproducibility
-                alpha=0.1,  # Fixed positive value for document-topic density
-                eta=0.01,  # Fixed positive value for topic-word density
-            )
+                # Create corpus for the new text
+                corpus = [self.dictionary.doc2bow(processed_text)]
+
+                # Update existing LDA model
+                self.lda_model.update(corpus)
+
+                # Use the updated model for topic extraction
+                current_lda_model = self.lda_model
+            else:
+                # Create fresh models for first use or when models aren't available
+                temp_dictionary = corpora.Dictionary([processed_text])
+                corpus = [temp_dictionary.doc2bow(processed_text)]
+
+                # Create a fresh LDA model for this specific text
+                current_lda_model = LdaModel(
+                    corpus,
+                    num_topics=min(
+                        self.num_topics, len(processed_text) // 2
+                    ),  # Ensure reasonable topic count
+                    passes=self.passes,
+                    id2word=temp_dictionary,
+                    random_state=42,  # For reproducibility
+                    alpha=0.1,  # Fixed positive value for document-topic density
+                    eta=0.01,  # Fixed positive value for topic-word density
+                )
 
             # Get topics
             topics = []
@@ -348,30 +332,22 @@ class SemanticAnalyzer:
 
         return list(set(key_phrases))  # Remove duplicates
 
-    def _calculate_document_similarity(
-        self, doc: Doc, cache_snapshot: list[tuple[str, "SemanticAnalysisResult"]]
-    ) -> dict[str, float]:
+    def _calculate_document_similarity(self, text: str) -> dict[str, float]:
         """Calculate similarity with other processed documents.
 
-        NOTE: This method must be called from within _spacy_lock context.
-
         Args:
-            doc: Already processed spaCy Doc object (avoids duplicate nlp() call)
-            cache_snapshot: Pre-captured snapshot of the document cache to avoid
-                           acquiring _cache_lock while holding _spacy_lock
+            text: Text to compare
 
         Returns:
             Dictionary of document similarities
         """
         similarities = {}
-
-        if not cache_snapshot:
-            return similarities
+        doc = self.nlp(text)
 
         # Check if the model has word vectors
         has_vectors = self.nlp.vocab.vectors_length > 0
 
-        for doc_id, cached_result in cache_snapshot:
+        for doc_id, cached_result in self._doc_cache.items():
             # Check if cached_result has entities and the first entity has context
             if not cached_result.entities or not cached_result.entities[0].get(
                 "context"
@@ -460,9 +436,8 @@ class SemanticAnalyzer:
 
     def clear_cache(self):
         """Clear the document cache and release all resources."""
-        # Clear document cache (thread-safe)
-        with self._cache_lock:
-            self._doc_cache.clear()
+        # Clear document cache
+        self._doc_cache.clear()
 
         # Release LDA model resources
         if hasattr(self, "lda_model") and self.lda_model is not None:
@@ -508,100 +483,15 @@ class SemanticAnalyzer:
 
         This method should be called when the analyzer is no longer needed
         to ensure proper cleanup of all resources.
-
-        Note: When used via SemanticAnalyzerProvider (singleton pattern),
-        the nlp model is NOT deleted to allow shared usage across threads.
-        Use SemanticAnalyzerProvider.clear_all() for complete cleanup.
         """
         self.clear_cache()
 
-        # Note: We intentionally do NOT delete self.nlp here because:
-        # 1. When used as singleton via SemanticAnalyzerProvider, other threads may still need it
-        # 2. The spaCy model is expensive to reload (~30s for en_core_web_md)
-        # 3. Memory will be released when the instance is garbage collected
-        # For complete cleanup including nlp model, use SemanticAnalyzerProvider.clear_all()
+        # More aggressive cleanup for shutdown
+        if hasattr(self, "nlp"):
+            try:
+                # Release the spaCy model completely
+                del self.nlp
+            except Exception as e:
+                logger.warning(f"Error releasing spaCy model: {e}")
 
         logger.debug("Semantic analyzer shutdown completed")
-
-
-class SemanticAnalyzerProvider:
-    """Thread-safe singleton provider for SemanticAnalyzer.
-
-    This class ensures that only one SemanticAnalyzer instance is created
-    per configuration, avoiding the overhead of loading spaCy models
-    multiple times in parallel processing scenarios.
-    """
-
-    _instances: dict[str, "SemanticAnalyzer"] = {}
-    _lock = threading.Lock()
-
-    @classmethod
-    def get_instance(
-        cls,
-        spacy_model: str = "en_core_web_md",
-        num_topics: int = 5,
-        passes: int = 10,
-        min_topic_freq: int = 2,
-    ) -> SemanticAnalyzer:
-        """Get or create a SemanticAnalyzer instance for the given configuration.
-
-        Args:
-            spacy_model: Name of the spaCy model to use
-            num_topics: Number of topics for LDA
-            passes: Number of passes for LDA training
-            min_topic_freq: Minimum frequency for topic terms
-
-        Returns:
-            SemanticAnalyzer instance (shared singleton for same spacy_model)
-        """
-        # Use spacy_model as the key since it's the most expensive resource
-        cache_key = spacy_model
-
-        if cache_key not in cls._instances:
-            with cls._lock:
-                # Double-check pattern for thread safety
-                if cache_key not in cls._instances:
-                    logger.info(
-                        f"Creating new SemanticAnalyzer singleton for model: {spacy_model}"
-                    )
-                    cls._instances[cache_key] = SemanticAnalyzer(
-                        spacy_model=spacy_model,
-                        num_topics=num_topics,
-                        passes=passes,
-                        min_topic_freq=min_topic_freq,
-                    )
-                    logger.info(
-                        f"SemanticAnalyzer singleton created and spaCy model loaded: {spacy_model}"
-                    )
-
-        return cls._instances[cache_key]
-
-    @classmethod
-    def preload_model(cls, spacy_model: str = "en_core_web_md") -> None:
-        """Pre-load the spaCy model to avoid lazy loading during batch processing.
-
-        Args:
-            spacy_model: Name of the spaCy model to preload
-        """
-        logger.info(f"Pre-loading spaCy model: {spacy_model}")
-        cls.get_instance(spacy_model=spacy_model)
-        logger.info(f"spaCy model pre-loaded: {spacy_model}")
-
-    @classmethod
-    def clear_all(cls) -> None:
-        """Clear all cached instances and release resources completely.
-
-        This method performs complete cleanup including deleting the spaCy model.
-        Use this only when shutting down the entire application.
-        """
-        with cls._lock:
-            for key, instance in cls._instances.items():
-                try:
-                    instance.shutdown()
-                    # Delete the spaCy model for complete cleanup
-                    if hasattr(instance, "nlp"):
-                        del instance.nlp
-                except Exception as e:
-                    logger.warning(f"Error shutting down analyzer {key}: {e}")
-            cls._instances.clear()
-        logger.info("All SemanticAnalyzer instances cleared")
