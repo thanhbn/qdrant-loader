@@ -14,7 +14,7 @@ from .hierarchy import HierarchyInfo
 from .navigation import NavigationContext
 from .project import ProjectInfo
 from .section import SectionInfo
-from .semantic import SemanticAnalysis
+from .semantic import EnrichmentMetadata, SemanticAnalysis
 
 
 @dataclass
@@ -234,6 +234,75 @@ class HybridSearchResult:
     def pos_tags(self) -> list[dict]:
         return self.semantic.pos_tags if self.semantic else []
 
+    # POC5: Enrichment metadata properties
+    @property
+    def enrichment(self) -> EnrichmentMetadata | None:
+        """Access enrichment metadata from semantic analysis."""
+        return self.semantic.enrichment if self.semantic else None
+
+    @property
+    def entity_types(self) -> dict[str, list[str]]:
+        """Get entity types mapping from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.entity_types
+        return {}
+
+    @property
+    def keyword_list(self) -> list[str]:
+        """Get simple keyword list from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.keyword_list
+        return []
+
+    @property
+    def keywords_full(self) -> list[dict]:
+        """Get full keyword objects with scores from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.keywords
+        return []
+
+    @property
+    def has_people(self) -> bool:
+        """Check if document contains PERSON entities."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.has_people
+        return False
+
+    @property
+    def has_organizations(self) -> bool:
+        """Check if document contains ORG entities."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.has_organizations
+        return False
+
+    @property
+    def has_locations(self) -> bool:
+        """Check if document contains location entities."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.has_locations
+        return False
+
+    @property
+    def top_keyword(self) -> str | None:
+        """Get the highest-scored keyword from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.top_keyword
+        return None
+
+    @property
+    def entity_count(self) -> int:
+        """Get total entity count from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.entity_count
+        return 0
+
+    @property
+    def keyword_count(self) -> int:
+        """Get total keyword count from enrichment."""
+        if self.semantic and self.semantic.enrichment:
+            return self.semantic.enrichment.keyword_count
+        return 0
+
     # Navigation
     @property
     def previous_section(self) -> str | None:
@@ -382,6 +451,43 @@ class HybridSearchResult:
             parts.append(f"{len(self.key_phrases)} key phrases")
         return " | ".join(parts) if parts else None
 
+    def get_enrichment_summary(self) -> str | None:
+        """POC5: Get formatted enrichment summary for display.
+
+        Returns a human-readable summary of enrichment metadata including
+        keywords and entity presence indicators.
+
+        Returns:
+            Formatted string with enrichment info, or None if no enrichment data
+        """
+        parts: list[str] = []
+
+        # Keywords summary
+        if self.keyword_list:
+            keywords_display = ", ".join(self.keyword_list[:5])
+            if len(self.keyword_list) > 5:
+                keywords_display += f" (+{len(self.keyword_list) - 5} more)"
+            parts.append(f"Keywords: {keywords_display}")
+
+        # Entity presence indicators
+        entity_parts: list[str] = []
+        if self.has_people:
+            people_count = len(self.entity_types.get("PERSON", []))
+            entity_parts.append(f"People ({people_count})")
+        if self.has_organizations:
+            org_count = len(self.entity_types.get("ORG", []))
+            entity_parts.append(f"Organizations ({org_count})")
+        if self.has_locations:
+            loc_count = len(self.entity_types.get("GPE", []))
+            loc_count += len(self.entity_types.get("LOC", []))
+            loc_count += len(self.entity_types.get("FAC", []))
+            entity_parts.append(f"Locations ({loc_count})")
+
+        if entity_parts:
+            parts.append(f"Entities: {', '.join(entity_parts)}")
+
+        return " | ".join(parts) if parts else None
+
     def get_section_context(self) -> str | None:
         if not self.section_title:
             return None
@@ -471,6 +577,10 @@ class HybridSearchResult:
 
     def is_structured_data(self) -> bool:
         return self.has_tables or self.is_excel_sheet
+
+    def has_enrichment_data(self) -> bool:
+        """POC5: Check if this result has any enrichment data."""
+        return bool(self.keyword_list or self.entity_types)
 
 
 def create_hybrid_search_result(
@@ -592,14 +702,45 @@ def create_hybrid_search_result(
             paragraph_count=kwargs.get("paragraph_count"),
         )
 
+    # POC5: Enhanced semantic analysis with enrichment metadata
     semantic = None
     semantic_fields = ["entities", "topics", "key_phrases", "pos_tags"]
-    if any(field in kwargs for field in semantic_fields):
+    enrichment_fields = [
+        "entity_types",
+        "entity_count",
+        "has_people",
+        "has_organizations",
+        "has_locations",
+        "keywords",
+        "keyword_list",
+        "keyword_count",
+        "top_keyword",
+    ]
+
+    has_semantic = any(field in kwargs for field in semantic_fields)
+    has_enrichment = any(field in kwargs for field in enrichment_fields)
+
+    if has_semantic or has_enrichment:
+        enrichment = None
+        if has_enrichment:
+            enrichment = EnrichmentMetadata(
+                entity_types=kwargs.get("entity_types", {}),
+                entity_count=kwargs.get("entity_count", 0),
+                has_people=kwargs.get("has_people", False),
+                has_organizations=kwargs.get("has_organizations", False),
+                has_locations=kwargs.get("has_locations", False),
+                keywords=kwargs.get("keywords", []),
+                keyword_list=kwargs.get("keyword_list", []),
+                keyword_count=kwargs.get("keyword_count", 0),
+                top_keyword=kwargs.get("top_keyword"),
+            )
+
         semantic = SemanticAnalysis(
             entities=kwargs.get("entities", []),
             topics=kwargs.get("topics", []),
             key_phrases=kwargs.get("key_phrases", []),
             pos_tags=kwargs.get("pos_tags", []),
+            enrichment=enrichment,
         )
 
     navigation = None
