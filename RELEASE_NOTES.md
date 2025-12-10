@@ -1,5 +1,68 @@
 # Release Notes
 
+## Version 0.7.4 - December 10, 2025
+
+### Metadata Enrichment - Advanced Enrichers (POC3)
+
+#### New Features
+
+- **HierarchyEnricher**: Track parent-child relationships between documents and chunks (#25)
+  - Header-based hierarchy detection for Markdown/HTML documents
+  - URL path-based hierarchy detection for web documentation
+  - Metadata includes `parent_id`, `hierarchy_level`, `hierarchy_path`, `section_title`
+  - Enables hierarchy-aware search and context expansion
+  - Priority set to HIGHEST to run before other enrichers
+
+- **HsEntityEnricher**: Enhanced entity extraction with Haystack-inspired patterns (#25)
+  - Confidence score filtering via `min_confidence` parameter
+  - Pluggable NER backend architecture (spaCy + HuggingFace support)
+  - Haystack-compatible `NamedEntityAnnotation` format
+  - Batch processing optimization using `nlp.pipe()`
+  - Position tracking with `start` and `end` indices for all entities
+  - Enhanced metadata: `named_entities`, `entities`, `entity_types`, `entity_count`
+
+#### Architecture Improvements
+
+- **Pluggable NER Backend System**:
+  - `NERBackend` abstract base class for custom NER implementations
+  - `SpaCyBackend`: Optimized batch processing with lazy model loading
+  - `HuggingFaceBackend`: Access state-of-the-art transformers models (optional dependency)
+  - Configurable backend selection via `config.backend` parameter
+
+- **Factory Integration**:
+  - New `create_advanced_pipeline()` function for quick setup
+  - Factory parameters: `enable_hierarchy`, `enable_hs_entities`
+  - Backward compatible: Existing `EntityEnricher` unchanged
+
+#### Testing
+
+- Comprehensive test coverage with 145 total tests passing
+- 30 unit tests for `HierarchyEnricher`
+- 38 unit tests for `HsEntityEnricher`
+- 26 integration tests for enricher pipeline coordination
+- 90%+ code coverage for new enrichers
+
+#### Configuration
+
+- Optional HuggingFace dependency: `pip install "qdrant-loader[transformers]"`
+- Example configuration for HuggingFace backend:
+  ```python
+  HsEntityEnricherConfig(
+      backend="huggingface",
+      hf_model="dslim/bert-base-NER",
+      hf_device="cuda",
+      min_confidence=0.7
+  )
+  ```
+
+#### Benefits
+
+- **Better Context**: Navigate to parent documents for richer information
+- **Hierarchy Navigation**: Enable queries like "Show me subsections of X"
+- **Higher Precision**: Filter low-confidence entities for cleaner results
+- **Extensibility**: Foundation for knowledge graph and advanced search features
+- **Modern NER**: Access to 1000+ pretrained NER models from HuggingFace
+
 ## Version 0.7.3 - Sept 11, 2025
 
 ### Logging System Fixes
