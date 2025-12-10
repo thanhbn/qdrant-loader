@@ -324,10 +324,22 @@ jobs:
           echo "Contents (with secrets masked):"
           sed 's/=.*/=***/' tests/.env.test
 
-      - name: Run MCP server tests and generate coverage reports
+      - name: Run MCP server tests (fast parallel scan)
+        id: fast-test
         run: |
           cd packages/qdrant-loader-mcp-server
-          python -m pytest tests/ --cov=src --cov-report=xml:../../coverage-mcp.xml --cov-report=html:../../htmlcov-mcp -v
+          # Step 1: Fast parallel run to find failures quickly
+          python -m pytest tests/ -n auto -qq --cov=src --cov-report=xml:../../coverage-mcp.xml --cov-report=html:../../htmlcov-mcp || echo "TESTS_FAILED=true" >> $GITHUB_ENV
+
+      - name: Re-run failed tests with verbose output
+        if: env.TESTS_FAILED == 'true'
+        run: |
+          cd packages/qdrant-loader-mcp-server
+          # Step 2: Re-run only failed tests with verbose output for debugging
+          echo "=== Re-running failed tests with verbose output ==="
+          python -m pytest tests/ -v --lf --tb=long
+          # Exit with failure after showing verbose output
+          exit 1
 
       - name: Upload MCP server coverage artifact
         uses: actions/upload-artifact@v4
