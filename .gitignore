@@ -66,6 +66,7 @@ site/
 
 # Ignore cursor AI rules
 qdrant-loader.code-workspace
+.claude/agents/
 packages/qdrant-loader-mcp-server/coverage.xml
 coverage.xml
 
