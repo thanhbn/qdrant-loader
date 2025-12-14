@@ -12,13 +12,10 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from qdrant_loader.config.base import BaseConfig
 
+# Re-export DatabaseDirectoryError for backward compatibility
+from qdrant_loader.exceptions import DatabaseDirectoryError
 
-class DatabaseDirectoryError(Exception):
-    """Exception raised when database directory needs to be created."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        super().__init__(f"Database directory does not exist: {path}")
+__all__ = ["DatabaseDirectoryError", "IngestionStatus", "StateManagementConfig"]
 
 
 class IngestionStatus:

@@ -407,20 +407,40 @@ def config(
         raise ClickException(f"Failed to display configuration: {str(e)!s}") from e
 
 
-# Add project management commands with lazy import
-def _add_project_commands():
-    """Lazily add project commands to avoid slow startup."""
-    from qdrant_loader.cli.project_commands import project_cli
+# Lazy project group - imports heavy dependencies only when 'project' subcommand is invoked
+class LazyProjectGroup(click.Group):
+    """Lazy-loading group that defers heavy imports until command execution.
 
-    cli.add_command(project_cli)
+    This allows --help to display the 'project' command without importing
+    rich, sqlalchemy, pydantic_settings, etc.
+    """
+
+    _real_group = None
+
+    def list_commands(self, ctx):
+        """Return list of subcommands without importing the real module."""
+        # Return known subcommand names without triggering imports
+        return ["list", "status", "validate"]
+
+    def get_command(self, ctx, cmd_name):
+        """Load real project commands only when a subcommand is invoked."""
+        if self._real_group is None:
+            from qdrant_loader.cli.project_commands import project_cli
+
+            LazyProjectGroup._real_group = project_cli
+        return self._real_group.get_command(ctx, cmd_name)
+
+    def invoke(self, ctx):
+        """Handle invocation, loading real commands if needed."""
+        if self._real_group is None:
+            from qdrant_loader.cli.project_commands import project_cli
+
+            LazyProjectGroup._real_group = project_cli
+        return self._real_group.invoke(ctx)
 
 
-# Only add project commands when CLI is actually used
-if __name__ == "__main__":
-    _add_project_commands()
-    cli()
-else:
-    # For when imported as a module, add commands on first access
-    import atexit
-
-    atexit.register(_add_project_commands)
+# Register lazy project group
+@cli.group(name="project", cls=LazyProjectGroup)
+def project():
+    """Project management commands."""
+    pass

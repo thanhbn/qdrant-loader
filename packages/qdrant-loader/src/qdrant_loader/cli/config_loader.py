@@ -1,17 +1,34 @@
+"""CLI configuration loader utilities.
+
+Note: LoggingConfig and heavy config modules are lazily imported to improve CLI startup time.
+DatabaseDirectoryError is imported from lightweight exceptions module to avoid pydantic import chain.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from click.exceptions import ClickException
 
-from qdrant_loader.config.state import DatabaseDirectoryError
-from qdrant_loader.utils.logging import LoggingConfig
+# Import from top-level exceptions module instead of config.state module
+# to avoid loading pydantic and the entire config chain at startup
+from qdrant_loader.exceptions import DatabaseDirectoryError
+
+if TYPE_CHECKING:
+    from qdrant_loader.utils.logging import LoggingConfig
+
+
+def _get_logging_config():
+    """Lazily import LoggingConfig."""
+    from qdrant_loader.utils.logging import LoggingConfig
+
+    return LoggingConfig
 
 
 # Back-compat shim for tests that import _get_logger from cli.cli
 def _get_logger():
-    return LoggingConfig.get_logger(__name__)
+    return _get_logging_config().get_logger(__name__)
 
 
 def setup_workspace(workspace_path: Path):
@@ -40,33 +57,33 @@ def load_config_with_workspace(
         from qdrant_loader.config import initialize_config_with_workspace
 
         if workspace_config:
-            LoggingConfig.get_logger(__name__).debug(
+            _get_logging_config().get_logger(__name__).debug(
                 "Loading configuration in workspace mode"
             )
             initialize_config_with_workspace(
                 workspace_config, skip_validation=skip_validation
             )
         else:
-            LoggingConfig.get_logger(__name__).debug(
+            _get_logging_config().get_logger(__name__).debug(
                 "Loading configuration in traditional mode"
             )
             load_config(config_path, env_path, skip_validation)
     except Exception as e:
-        LoggingConfig.get_logger(__name__).error("config_load_failed", error=str(e))
+        _get_logging_config().get_logger(__name__).error("config_load_failed", error=str(e))
         raise ClickException(f"Failed to load configuration: {str(e)!s}") from e
 
 
 def create_database_directory(path: Path) -> bool:
     try:
         abs_path = path.resolve()
-        LoggingConfig.get_logger(__name__).info(
+        _get_logging_config().get_logger(__name__).info(
             "The database directory does not exist", path=str(abs_path)
         )
         import click
 
         if click.confirm("Would you like to create this directory?", default=True):
             abs_path.mkdir(parents=True, mode=0o755, exist_ok=True)
-            LoggingConfig.get_logger(__name__).info("Created directory: %s", abs_path)
+            _get_logging_config().get_logger(__name__).info("Created directory: %s", abs_path)
             return True
         return False
     except Exception as e:  # pragma: no cover - interactive path
@@ -83,7 +100,7 @@ def load_config(
 
         if config_path is not None:
             if not config_path.exists():
-                LoggingConfig.get_logger(__name__).error(
+                _get_logging_config().get_logger(__name__).error(
                     "config_not_found", path=str(config_path)
                 )
                 raise ClickException(f"Config file not found: {str(config_path)!s}")
@@ -117,5 +134,5 @@ def load_config(
     except ClickException:
         raise
     except Exception as e:
-        LoggingConfig.get_logger(__name__).error("config_load_failed", error=str(e))
+        _get_logging_config().get_logger(__name__).error("config_load_failed", error=str(e))
         raise ClickException(f"Failed to load configuration: {str(e)!s}") from e
