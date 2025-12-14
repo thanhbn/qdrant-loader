@@ -1,11 +1,8 @@
 """Main orchestrator for the ingestion pipeline."""
 
+from typing import TYPE_CHECKING
+
 from qdrant_loader.config import Settings, SourcesConfig
-from qdrant_loader.connectors.confluence import ConfluenceConnector
-from qdrant_loader.connectors.git import GitConnector
-from qdrant_loader.connectors.jira import JiraConnector
-from qdrant_loader.connectors.localfile import LocalFileConnector
-from qdrant_loader.connectors.publicdocs import PublicDocsConnector
 from qdrant_loader.core.document import Document
 from qdrant_loader.core.project_manager import ProjectManager
 from qdrant_loader.core.state.state_change_detector import StateChangeDetector
@@ -16,7 +13,46 @@ from .document_pipeline import DocumentPipeline
 from .source_filter import SourceFilter
 from .source_processor import SourceProcessor
 
+if TYPE_CHECKING:
+    from qdrant_loader.connectors.confluence import ConfluenceConnector
+    from qdrant_loader.connectors.git import GitConnector
+    from qdrant_loader.connectors.jira import JiraConnector
+    from qdrant_loader.connectors.localfile import LocalFileConnector
+    from qdrant_loader.connectors.publicdocs import PublicDocsConnector
+
 logger = LoggingConfig.get_logger(__name__)
+
+
+# Lazy connector imports to reduce startup time
+_connector_cache: dict[str, type] = {}
+
+
+def _get_connector_class(connector_type: str) -> type:
+    """Lazily import and cache connector classes."""
+    if connector_type not in _connector_cache:
+        if connector_type == "confluence":
+            from qdrant_loader.connectors.confluence import ConfluenceConnector
+
+            _connector_cache[connector_type] = ConfluenceConnector
+        elif connector_type == "git":
+            from qdrant_loader.connectors.git import GitConnector
+
+            _connector_cache[connector_type] = GitConnector
+        elif connector_type == "jira":
+            from qdrant_loader.connectors.jira import JiraConnector
+
+            _connector_cache[connector_type] = JiraConnector
+        elif connector_type == "localfile":
+            from qdrant_loader.connectors.localfile import LocalFileConnector
+
+            _connector_cache[connector_type] = LocalFileConnector
+        elif connector_type == "publicdocs":
+            from qdrant_loader.connectors.publicdocs import PublicDocsConnector
+
+            _connector_cache[connector_type] = PublicDocsConnector
+        else:
+            raise ValueError(f"Unknown connector type: {connector_type}")
+    return _connector_cache[connector_type]
 
 
 class PipelineComponents:
@@ -212,38 +248,42 @@ class PipelineOrchestrator:
         """Collect documents from all configured sources."""
         documents = []
 
-        # Process each source type with project context
+        # Process each source type with project context (lazy import connectors)
         if filtered_config.confluence:
             confluence_docs = (
                 await self.components.source_processor.process_source_type(
-                    filtered_config.confluence, ConfluenceConnector, "Confluence"
+                    filtered_config.confluence,
+                    _get_connector_class("confluence"),
+                    "Confluence",
                 )
             )
             documents.extend(confluence_docs)
 
         if filtered_config.git:
             git_docs = await self.components.source_processor.process_source_type(
-                filtered_config.git, GitConnector, "Git"
+                filtered_config.git, _get_connector_class("git"), "Git"
             )
             documents.extend(git_docs)
 
         if filtered_config.jira:
             jira_docs = await self.components.source_processor.process_source_type(
-                filtered_config.jira, JiraConnector, "Jira"
+                filtered_config.jira, _get_connector_class("jira"), "Jira"
             )
             documents.extend(jira_docs)
 
         if filtered_config.publicdocs:
             publicdocs_docs = (
                 await self.components.source_processor.process_source_type(
-                    filtered_config.publicdocs, PublicDocsConnector, "PublicDocs"
+                    filtered_config.publicdocs,
+                    _get_connector_class("publicdocs"),
+                    "PublicDocs",
                 )
             )
             documents.extend(publicdocs_docs)
 
         if filtered_config.localfile:
             localfile_docs = await self.components.source_processor.process_source_type(
-                filtered_config.localfile, LocalFileConnector, "LocalFile"
+                filtered_config.localfile, _get_connector_class("localfile"), "LocalFile"
             )
             documents.extend(localfile_docs)
 

@@ -1,11 +1,18 @@
-"""Text processing module integrating LangChain, spaCy, and NLTK."""
+"""Text processing module integrating LangChain, spaCy, and NLTK.
 
-import nltk
-import spacy
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+Note: Heavy NLP libraries (nltk, spacy, langchain) are lazily imported
+to improve CLI startup time. They are only loaded when TextProcessor is instantiated.
+"""
+
+from typing import TYPE_CHECKING
+
 from qdrant_loader.config import Settings
 from qdrant_loader.utils.logging import LoggingConfig
-from spacy.cli.download import download
+
+if TYPE_CHECKING:
+    import nltk
+    import spacy
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = LoggingConfig.get_logger(__name__)
 
@@ -24,6 +31,12 @@ class TextProcessor:
         Args:
             settings: Application settings containing configuration for text processing
         """
+        # Lazy import heavy NLP libraries
+        import nltk
+        import spacy
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        from spacy.cli.download import download
+
         self.settings = settings
 
         # Download required NLTK data

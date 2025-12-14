@@ -1,4 +1,8 @@
-"""Base abstract class for chunking strategies."""
+"""Base abstract class for chunking strategies.
+
+Note: TextProcessor (which imports heavy NLP libraries) is lazily imported
+to improve CLI startup time. It is only loaded when a strategy is instantiated.
+"""
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -6,11 +10,11 @@ from typing import TYPE_CHECKING
 import tiktoken
 
 from qdrant_loader.core.document import Document
-from qdrant_loader.core.text_processing.text_processor import TextProcessor
 from qdrant_loader.utils.logging import LoggingConfig
 
 if TYPE_CHECKING:
     from qdrant_loader.config import Settings
+    from qdrant_loader.core.text_processing.text_processor import TextProcessor
 
 logger = LoggingConfig.get_logger(__name__)
 
@@ -63,7 +67,9 @@ class BaseChunkingStrategy(ABC):
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("Chunk overlap must be less than chunk size")
 
-        # Initialize text processor
+        # Initialize text processor (lazy import to avoid loading heavy NLP libraries at startup)
+        from qdrant_loader.core.text_processing.text_processor import TextProcessor
+
         self.text_processor = TextProcessor(settings)
 
     def _count_tokens(self, text: str) -> int:
