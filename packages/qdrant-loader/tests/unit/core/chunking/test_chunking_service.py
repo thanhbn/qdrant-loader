@@ -601,23 +601,6 @@ class TestChunkingService:
                     strategy, CodeChunkingStrategy
                 ), f"Failed for language: {lang}"
 
-    def test_new_method_creates_instance(self, mock_global_config, mock_settings):
-        """Test that __new__ method creates and initializes instance correctly."""
-        with (
-            patch("qdrant_loader.core.chunking.chunking_service.Path"),
-            patch("qdrant_loader.core.chunking.chunking_service.IngestionMonitor"),
-            patch("qdrant_loader.core.chunking.chunking_service.LoggingConfig"),
-        ):
-
-            # Use __new__ directly
-            instance = ChunkingService.__new__(
-                ChunkingService, mock_global_config, mock_settings
-            )
-
-            assert isinstance(instance, ChunkingService)
-            assert instance.config == mock_global_config
-            assert instance.settings == mock_settings
-
     def test_chunk_document_logging(
         self, mock_global_config, mock_settings, sample_document
     ):

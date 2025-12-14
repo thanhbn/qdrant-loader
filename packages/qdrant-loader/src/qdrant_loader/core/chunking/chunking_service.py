@@ -20,17 +20,6 @@ from qdrant_loader.utils.logging import LoggingConfig
 class ChunkingService:
     """Service for chunking documents into smaller pieces."""
 
-    def __new__(cls, config: GlobalConfig, settings: Settings):
-        """Create a new instance of ChunkingService.
-
-        Args:
-            config: Global configuration
-            settings: Application settings
-        """
-        instance = super().__new__(cls)
-        instance.__init__(config, settings)
-        return instance
-
     def __init__(self, config: GlobalConfig, settings: Settings):
         """Initialize the chunking service.
 
