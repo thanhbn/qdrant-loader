@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from .providers.ollama import OllamaProvider
+from .providers.openai import OpenAIProvider
+
+try:
+    from .providers.azure_openai import AzureOpenAIProvider  # type: ignore
+except Exception:  # pragma: no cover - optional dependency surface
+    AzureOpenAIProvider = None  # type: ignore
 from .settings import LLMSettings
 from .types import ChatClient, EmbeddingsClient, LLMProvider, TokenCounter
-
-if TYPE_CHECKING:
-    from .providers.ollama import OllamaProvider
-    from .providers.openai import OpenAIProvider
-
-# Lazy provider cache to avoid repeated imports
-_provider_cache: dict[str, type] = {}
 
 
 class _NoopEmbeddings(EmbeddingsClient):
@@ -50,36 +49,6 @@ def _safe_hostname(url: str | None) -> str | None:
         return None
 
 
-def _get_openai_provider():
-    """Lazily import OpenAI provider."""
-    if "openai" not in _provider_cache:
-        from .providers.openai import OpenAIProvider
-
-        _provider_cache["openai"] = OpenAIProvider
-    return _provider_cache["openai"]
-
-
-def _get_ollama_provider():
-    """Lazily import Ollama provider."""
-    if "ollama" not in _provider_cache:
-        from .providers.ollama import OllamaProvider
-
-        _provider_cache["ollama"] = OllamaProvider
-    return _provider_cache["ollama"]
-
-
-def _get_azure_provider():
-    """Lazily import Azure OpenAI provider."""
-    if "azure" not in _provider_cache:
-        try:
-            from .providers.azure_openai import AzureOpenAIProvider
-
-            _provider_cache["azure"] = AzureOpenAIProvider
-        except Exception:
-            _provider_cache["azure"] = None
-    return _provider_cache["azure"]
-
-
 def create_provider(settings: LLMSettings) -> LLMProvider:
     """Create a provider by settings.
 
@@ -100,22 +69,19 @@ def create_provider(settings: LLMSettings) -> LLMProvider:
             or base_host.endswith(".cognitiveservices.azure.com")
         )
     )
-    AzureOpenAIProvider = _get_azure_provider()
-    if is_azure and AzureOpenAIProvider is not None:
+    if is_azure and AzureOpenAIProvider is not None:  # type: ignore[truthy-bool]
         try:
-            return AzureOpenAIProvider(settings)
+            return AzureOpenAIProvider(settings)  # type: ignore[misc]
         except Exception:
             return _NoopProvider()
 
     if "openai" in provider_name or "openai" in base_url.lower():
         try:
-            OpenAIProvider = _get_openai_provider()
             return OpenAIProvider(settings)
         except Exception:
             return _NoopProvider()
 
     if provider_name == "ollama" or (base_host in ("localhost", "127.0.0.1")):
-        OllamaProvider = _get_ollama_provider()
         return OllamaProvider(settings)
 
     return _NoopProvider()

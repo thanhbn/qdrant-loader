@@ -1,19 +1,16 @@
-"""Qdrant vector database manager.
-
-Note: qdrant_client is lazily imported to improve CLI startup time.
-It is only loaded when QdrantManager is instantiated.
-"""
-
 import asyncio
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from urllib.parse import urlparse
+
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+from qdrant_client.http.models import (
+    Distance,
+    VectorParams,
+)
 
 from ..config import Settings, get_global_config, get_settings
 from ..utils.logging import LoggingConfig
-
-if TYPE_CHECKING:
-    from qdrant_client import QdrantClient
-    from qdrant_client.http import models
 
 logger = LoggingConfig.get_logger(__name__)
 
@@ -56,9 +53,6 @@ class QdrantManager:
 
     def connect(self) -> None:
         """Establish connection to qDrant server."""
-        # Lazy import qdrant_client to improve CLI startup time
-        from qdrant_client import QdrantClient
-
         try:
             # Ensure HTTPS is used when API key is present, but only for non-local URLs
             url = self.settings.qdrant_url
@@ -96,20 +90,16 @@ class QdrantManager:
                 url=url,
             ) from e
 
-    def _ensure_client_connected(self) -> "QdrantClient":
+    def _ensure_client_connected(self) -> QdrantClient:
         """Ensure the client is connected before performing operations."""
         if self.client is None:
             raise QdrantConnectionError(
                 "Qdrant client is not connected. Please call connect() first."
             )
-        from qdrant_client import QdrantClient
-
         return cast(QdrantClient, self.client)
 
     def create_collection(self) -> None:
         """Create a new collection if it doesn't exist."""
-        from qdrant_client.http.models import Distance, VectorParams
-
         try:
             client = self._ensure_client_connected()
             # Check if collection already exists
@@ -219,7 +209,7 @@ class QdrantManager:
             self.logger.error("Failed to create collection", error=str(e))
             raise
 
-    async def upsert_points(self, points: list["models.PointStruct"]) -> None:
+    async def upsert_points(self, points: list[models.PointStruct]) -> None:
         """Upsert points into the collection.
 
         Args:
@@ -252,7 +242,7 @@ class QdrantManager:
 
     def search(
         self, query_vector: list[float], limit: int = 5
-    ) -> list["models.ScoredPoint"]:
+    ) -> list[models.ScoredPoint]:
         """Search for similar vectors in the collection."""
         try:
             client = self._ensure_client_connected()
@@ -269,7 +259,7 @@ class QdrantManager:
 
     def search_with_project_filter(
         self, query_vector: list[float], project_ids: list[str], limit: int = 5
-    ) -> list["models.ScoredPoint"]:
+    ) -> list[models.ScoredPoint]:
         """Search for similar vectors in the collection with project filtering.
 
         Args:
@@ -280,8 +270,6 @@ class QdrantManager:
         Returns:
             List of scored points matching the query and project filter
         """
-        from qdrant_client.http import models
-
         try:
             client = self._ensure_client_connected()
 
@@ -356,8 +344,6 @@ class QdrantManager:
         Args:
             document_ids: List of document IDs to delete
         """
-        from qdrant_client.http import models
-
         self.logger.debug(
             "Deleting points by document ID",
             extra={
