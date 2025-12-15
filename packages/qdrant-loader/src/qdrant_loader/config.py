@@ -13,8 +13,8 @@ class SemanticAnalysisConfig(BaseModel):
     lda_passes: int = Field(default=10, description="Number of passes for LDA training")
 
     spacy_model: str = Field(
-        default="en_core_web_md",
-        description="spaCy model to use for text processing. Options: en_core_web_sm (15MB, no vectors), en_core_web_md (50MB, 20k vectors), en_core_web_lg (750MB, 514k vectors)",
+        default="en_core_web_sm",
+        description="spaCy model to use for text processing. Options: en_core_web_sm (12MB, faster loading), en_core_web_md (91MB, 20k vectors), en_core_web_lg (560MB, 514k vectors). Default changed to en_core_web_sm for faster ingestion (2025-12-14).",
     )
 
 

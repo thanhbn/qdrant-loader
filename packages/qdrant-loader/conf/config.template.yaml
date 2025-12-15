@@ -147,10 +147,10 @@ global:
   semantic_analysis:
     num_topics: 3                    # Number of topics to extract using LDA
     lda_passes: 10                   # Number of passes for LDA training
-    spacy_model: "en_core_web_md"    # spaCy model for text processing
-                                     # Options: en_core_web_sm (15MB, no vectors)
-                                     #          en_core_web_md (50MB, 20k vectors) - recommended
-                                     #          en_core_web_lg (750MB, 514k vectors)
+    spacy_model: "en_core_web_sm"    # spaCy model for text processing (default: en_core_web_sm for faster loading)
+                                     # Options: en_core_web_sm (12MB, faster) - recommended for ingestion
+                                     #          en_core_web_md (91MB, 20k vectors) - use if word vectors needed
+                                     #          en_core_web_lg (560MB, 514k vectors)
 
   # State management configuration
   # Controls how document ingestion state is tracked
