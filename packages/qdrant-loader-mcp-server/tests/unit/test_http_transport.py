@@ -419,3 +419,164 @@ class TestHTTPTransportErrorHandling:
 
         assert response["jsonrpc"] == "2.0"
         assert "result" in response
+
+
+class TestTwoPhaseStartup:
+    """Test two-phase startup functionality."""
+
+    def test_deferred_init_without_handler(self):
+        """Test initialization with deferred_init=True allows None handler."""
+        from qdrant_loader_mcp_server.transport.http_handler import ServerStatus
+
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+
+        assert transport.mcp_handler is None
+        assert transport.status == ServerStatus.STARTING
+        assert transport.is_ready is False
+
+    def test_deferred_init_false_requires_handler(self):
+        """Test initialization with deferred_init=False requires handler."""
+        with pytest.raises(ValueError, match="mcp_handler is required"):
+            HTTPTransportHandler(
+                mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=False
+            )
+
+    def test_health_endpoint_returns_starting_status(self):
+        """Test /health returns 'starting' status when deferred_init=True."""
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+        client = TestClient(transport.app)
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "starting"
+        assert data["transport"] == "http"
+        assert data["protocol"] == "mcp"
+
+    def test_mcp_post_returns_503_when_not_ready(self):
+        """Test POST /mcp returns 503 when server is not ready."""
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+        client = TestClient(transport.app)
+
+        mcp_request = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+            "id": 1,
+        }
+
+        response = client.post(
+            "/mcp",
+            json=mcp_request,
+            headers={"Origin": "http://localhost"},
+        )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert "error" in data
+        assert data["error"]["message"] == "MCP server is starting, please retry"
+        assert "Retry-After" in response.headers
+
+    def test_mcp_get_returns_503_when_not_ready(self):
+        """Test GET /mcp returns 503 when server is not ready."""
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+        client = TestClient(transport.app)
+
+        response = client.get(
+            "/mcp",
+            headers={"Origin": "http://localhost"},
+        )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert "error" in data
+        assert data["status"] == "starting"
+        assert "Retry-After" in response.headers
+
+    @pytest.mark.asyncio
+    async def test_set_ready_transitions_to_healthy(self, mock_mcp_handler):
+        """Test set_ready() transitions status to healthy."""
+        from qdrant_loader_mcp_server.transport.http_handler import ServerStatus
+
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+
+        assert transport.status == ServerStatus.STARTING
+        assert transport.mcp_handler is None
+
+        # Set ready
+        await transport.set_ready(mock_mcp_handler)
+
+        assert transport.status == ServerStatus.HEALTHY
+        assert transport.mcp_handler == mock_mcp_handler
+        assert transport.is_ready is True
+
+    @pytest.mark.asyncio
+    async def test_set_unhealthy_transitions_status(self, mock_mcp_handler):
+        """Test set_unhealthy() transitions status to unhealthy."""
+        from qdrant_loader_mcp_server.transport.http_handler import ServerStatus
+
+        transport = HTTPTransportHandler(
+            mcp_handler=mock_mcp_handler, host="127.0.0.1", port=8080
+        )
+
+        assert transport.status == ServerStatus.HEALTHY
+
+        # Set unhealthy
+        await transport.set_unhealthy("Test error")
+
+        assert transport.status == ServerStatus.UNHEALTHY
+        assert transport.is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_mcp_works_after_set_ready(self, mock_mcp_handler):
+        """Test /mcp works normally after set_ready() is called."""
+        transport = HTTPTransportHandler(
+            mcp_handler=None, host="127.0.0.1", port=8080, deferred_init=True
+        )
+        client = TestClient(transport.app)
+
+        # Initially returns 503
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "test", "id": 1},
+            headers={"Origin": "http://localhost"},
+        )
+        assert response.status_code == 503
+
+        # Set ready
+        mock_mcp_handler.handle_request = AsyncMock(
+            return_value={"jsonrpc": "2.0", "id": 1, "result": {}}
+        )
+        await transport.set_ready(mock_mcp_handler)
+
+        # Now works
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "test", "id": 1},
+            headers={"Origin": "http://localhost"},
+        )
+        assert response.status_code == 200
+
+    def test_health_endpoint_returns_healthy_after_init(self, mock_mcp_handler):
+        """Test /health returns 'healthy' when initialized normally."""
+        transport = HTTPTransportHandler(
+            mcp_handler=mock_mcp_handler, host="127.0.0.1", port=8080
+        )
+        client = TestClient(transport.app)
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"

@@ -3,31 +3,58 @@
 import asyncio
 import json
 import time
+from enum import Enum
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..utils.logging import LoggingConfig
 
 logger = LoggingConfig.get_logger(__name__)
 
 
+class ServerStatus(str, Enum):
+    """Server readiness status for two-phase startup."""
+
+    STARTING = "starting"
+    HEALTHY = "healthy"
+    UNHEALTHY = "unhealthy"
+
+
 class HTTPTransportHandler:
     """HTTP Transport Handler for MCP Protocol with SSE streaming support."""
 
-    def __init__(self, mcp_handler, host: str = "127.0.0.1", port: int = 8080):
+    def __init__(
+        self,
+        mcp_handler=None,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        deferred_init: bool = False,
+    ):
         """Initialize HTTP transport handler.
 
         Args:
-            mcp_handler: The MCP handler instance to process requests
+            mcp_handler: The MCP handler instance to process requests.
+                         Can be None if deferred_init=True.
             host: Host to bind to (default: 127.0.0.1 for security)
             port: Port to bind to (default: 8080)
+            deferred_init: If True, allows starting without mcp_handler.
+                          The handler must be set later via set_ready().
         """
-        self.mcp_handler = mcp_handler
+        if not deferred_init and mcp_handler is None:
+            raise ValueError("mcp_handler is required when deferred_init=False")
+
+        self._mcp_handler = mcp_handler
         self.host = host
         self.port = port
+        self._deferred_init = deferred_init
+
+        # Server status for two-phase startup
+        self._status = ServerStatus.STARTING if deferred_init else ServerStatus.HEALTHY
+        self._status_lock = asyncio.Lock()
+
         self.app = FastAPI(
             title="QDrant Loader MCP Server",
             description="HTTP transport for Model Context Protocol",
@@ -40,7 +67,13 @@ class HTTPTransportHandler:
         self._counter_lock = asyncio.Lock()
         self._setup_middleware()
         self._setup_routes()
-        logger.info(f"HTTP transport handler initialized on {host}:{port}")
+
+        if deferred_init:
+            logger.info(
+                f"HTTP transport handler initialized on {host}:{port} (deferred mode, status={self._status.value})"
+            )
+        else:
+            logger.info(f"HTTP transport handler initialized on {host}:{port}")
 
     def _setup_middleware(self):
         """Setup FastAPI middleware for CORS and security."""
@@ -84,12 +117,41 @@ class HTTPTransportHandler:
         @self.app.post("/mcp")
         async def handle_mcp_post(request: Request):
             """Handle client-to-server messages via HTTP POST."""
+            # Check readiness before processing
+            if self._status != ServerStatus.HEALTHY:
+                logger.warning(
+                    f"POST /mcp rejected: server not ready (status={self._status.value})"
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32000,
+                            "message": "MCP server is starting, please retry",
+                        },
+                    },
+                    headers={"Retry-After": "5"},
+                )
             logger.debug("Received POST request to /mcp")
             return await self._handle_post_request(request)
 
         @self.app.get("/mcp")
         async def handle_mcp_get(request: Request):
             """Handle server-to-client streaming via SSE."""
+            # Check readiness before processing
+            if self._status != ServerStatus.HEALTHY:
+                logger.warning(
+                    f"GET /mcp rejected: server not ready (status={self._status.value})"
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "MCP server is starting, please retry",
+                        "status": self._status.value,
+                    },
+                    headers={"Retry-After": "5"},
+                )
             logger.debug("Received GET request to /mcp for SSE streaming")
             return await self._handle_get_request(request)
 
@@ -108,8 +170,12 @@ class HTTPTransportHandler:
 
         @self.app.get("/health")
         async def health_check():
-            """Health check endpoint."""
-            return {"status": "healthy", "transport": "http", "protocol": "mcp"}
+            """Health check endpoint with status awareness for two-phase startup."""
+            return {
+                "status": self._status.value,
+                "transport": "http",
+                "protocol": "mcp",
+            }
 
     async def _handle_post_request(self, request: Request) -> dict[str, Any]:
         """Process MCP messages from HTTP POST requests.
@@ -146,7 +212,7 @@ class HTTPTransportHandler:
             )
 
             # Add headers context to request processing
-            response = await self.mcp_handler.handle_request(
+            response = await self._mcp_handler.handle_request(
                 mcp_request, headers=dict(request.headers)
             )
 
@@ -239,6 +305,45 @@ class HTTPTransportHandler:
     def has_inflight_non_streaming(self) -> bool:
         """Whether there are non-streaming in-flight requests."""
         return self._inflight_non_stream_requests > 0
+
+    async def set_ready(self, mcp_handler) -> None:
+        """Set the MCP handler and mark server as ready.
+
+        This method is used in two-phase startup to complete initialization
+        after heavy components have been loaded in the background.
+
+        Args:
+            mcp_handler: The fully initialized MCP handler instance
+        """
+        async with self._status_lock:
+            self._mcp_handler = mcp_handler
+            self._status = ServerStatus.HEALTHY
+            logger.info("MCP server is now ready (status=healthy)")
+
+    async def set_unhealthy(self, reason: str = "Unknown error") -> None:
+        """Mark server as unhealthy.
+
+        Args:
+            reason: Description of why the server became unhealthy
+        """
+        async with self._status_lock:
+            self._status = ServerStatus.UNHEALTHY
+            logger.error(f"MCP server marked unhealthy: {reason}")
+
+    @property
+    def status(self) -> ServerStatus:
+        """Get current server status."""
+        return self._status
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if server is ready to handle requests."""
+        return self._status == ServerStatus.HEALTHY
+
+    @property
+    def mcp_handler(self):
+        """Get the MCP handler (backward compatibility property)."""
+        return self._mcp_handler
 
     def _validate_origin(self, origin: str | None) -> bool:
         """Validate Origin header to prevent DNS rebinding attacks.
