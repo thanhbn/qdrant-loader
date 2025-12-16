@@ -17,9 +17,10 @@ from dotenv import load_dotenv
 
 from .config import Config
 from .config_loader import load_config, redact_effective_config
-from .mcp import MCPHandler
-from .search.engine import SearchEngine
-from .search.processor import QueryProcessor
+
+# NOTE: Heavy imports (MCPHandler, SearchEngine, QueryProcessor) are deferred
+# to enable two-phase startup. They are imported inside functions that need them.
+# HTTPTransportHandler is lightweight and can be imported at module level.
 from .transport import HTTPTransportHandler
 from .utils import LoggingConfig, get_version
 
@@ -27,8 +28,17 @@ from .utils import LoggingConfig, get_version
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 
-def _setup_logging(log_level: str, transport: str | None = None) -> None:
-    """Set up logging configuration."""
+def _setup_logging(
+    log_level: str, transport: str | None = None, minimal: bool = False
+) -> None:
+    """Set up logging configuration.
+
+    Args:
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        transport: Transport type (stdio, http). If stdio, console logging is disabled.
+        minimal: If True, use minimal logging without heavy core imports.
+                 Use for fast two-phase startup.
+    """
     try:
         # Force-disable console logging in stdio mode to avoid polluting stdout
         if transport and transport.lower() == "stdio":
@@ -58,12 +68,15 @@ def _setup_logging(log_level: str, transport: str | None = None) -> None:
                 LoggingConfig.setup(
                     level=level,
                     format=("json" if disable_console_logging else "console"),
+                    minimal=minimal,
                 )
         else:
             # Force replace handlers on older versions
             logging.getLogger().handlers = []
             LoggingConfig.setup(
-                level=level, format=("json" if disable_console_logging else "console")
+                level=level,
+                format=("json" if disable_console_logging else "console"),
+                minimal=minimal,
             )
     except Exception as e:
         print(f"Failed to setup logging: {e}", file=sys.stderr)
@@ -103,28 +116,22 @@ async def shutdown(
 async def start_http_server(
     config: Config, log_level: str, host: str, port: int, shutdown_event: asyncio.Event
 ):
-    """Start MCP server with HTTP transport."""
+    """Start MCP server with HTTP transport using two-phase startup.
+
+    Phase 1: Start HTTP server immediately with /health available
+    Phase 2: Initialize heavy components (SearchEngine, etc.) in background
+    """
     logger = LoggingConfig.get_logger(__name__)
     search_engine = None
 
     try:
-        logger.info(f"Starting HTTP server on {host}:{port}")
+        logger.info(f"Starting HTTP server on {host}:{port} (two-phase startup)")
 
-        # Initialize components
-        search_engine = SearchEngine()
-        query_processor = QueryProcessor(config.openai)
-        mcp_handler = MCPHandler(search_engine, query_processor)
-
-        # Initialize search engine
-        try:
-            await search_engine.initialize(config.qdrant, config.openai, config.search)
-            logger.info("Search engine initialized successfully")
-        except Exception as e:
-            logger.error("Failed to initialize search engine", exc_info=True)
-            raise RuntimeError("Failed to initialize search engine") from e
-
-        # Create HTTP transport handler
-        http_handler = HTTPTransportHandler(mcp_handler, host=host, port=port)
+        # PHASE 1: Create HTTP handler in deferred mode (fast, <1 second)
+        http_handler = HTTPTransportHandler(
+            mcp_handler=None, host=host, port=port, deferred_init=True
+        )
+        logger.info("Phase 1: HTTP handler created in deferred mode")
 
         # Start the FastAPI server using uvicorn
         import uvicorn
@@ -138,7 +145,78 @@ async def start_http_server(
         )
 
         server = uvicorn.Server(uvicorn_config)
-        logger.info(f"HTTP MCP server ready at http://{host}:{port}/mcp")
+        logger.info(f"HTTP server starting at http://{host}:{port}")
+        logger.info("  /health available immediately (status=starting)")
+        logger.info("  /mcp returns 503 until initialization completes")
+
+        # PHASE 2: Background initialization of heavy components
+        async def initialize_components():
+            """Initialize heavy components in background after server starts."""
+            nonlocal search_engine
+            init_logger = LoggingConfig.get_logger(__name__)
+
+            try:
+                init_logger.info("Phase 2: Starting background initialization...")
+                init_start = time.time()
+
+                # Deferred imports - these load heavy dependencies (openai, spacy, etc.)
+                # Run in thread pool to avoid blocking the event loop so the server
+                # can accept connections while imports are loading
+                init_logger.info("  Loading heavy modules in background thread...")
+
+                def do_heavy_imports():
+                    """Run heavy imports in a thread to avoid blocking event loop."""
+                    from .mcp import MCPHandler
+                    from .search.engine import SearchEngine
+                    from .search.processor import QueryProcessor
+
+                    return SearchEngine, QueryProcessor, MCPHandler
+
+                loop = asyncio.get_event_loop()
+                SearchEngine, QueryProcessor, MCPHandler = await loop.run_in_executor(
+                    None, do_heavy_imports
+                )
+                init_logger.info("  Heavy modules loaded successfully")
+
+                # Upgrade logging from minimal to full now that heavy imports are done
+                init_logger.info("  Upgrading logging from minimal mode...")
+                LoggingConfig.upgrade_from_minimal()
+
+                # Initialize heavy components
+                init_logger.info("  Initializing SearchEngine...")
+                search_engine = SearchEngine()
+
+                init_logger.info("  Initializing QueryProcessor...")
+                query_processor = QueryProcessor(config.openai)
+
+                init_logger.info("  Creating MCPHandler...")
+                mcp_handler = MCPHandler(search_engine, query_processor)
+
+                # Initialize search engine (network calls to Qdrant, etc.)
+                init_logger.info("  Connecting to Qdrant and initializing search...")
+                await search_engine.initialize(
+                    config.qdrant, config.openai, config.search
+                )
+
+                # Mark server as ready
+                await http_handler.set_ready(mcp_handler)
+
+                init_duration = time.time() - init_start
+                init_logger.info(
+                    f"Phase 2: Background initialization completed in {init_duration:.2f}s"
+                )
+                init_logger.info(f"HTTP MCP server ready at http://{host}:{port}/mcp")
+
+            except Exception as e:
+                init_logger.error(
+                    f"Phase 2: Background initialization failed: {e}", exc_info=True
+                )
+                await http_handler.set_unhealthy(str(e))
+                # Don't raise - let the server continue running (unhealthy)
+                # This allows operators to check /health and see the error
+
+        # Start background initialization task
+        init_task = asyncio.create_task(initialize_components())
 
         # Create a task to monitor shutdown event
         async def shutdown_monitor():
@@ -229,6 +307,19 @@ async def start_http_server(
             else:
                 logger.info(f"Server stopped during shutdown: {e}")
         finally:
+            # Clean up the init task if still running
+            if init_task and not init_task.done():
+                logger.debug("Cleaning up background initialization task")
+                init_task.cancel()
+                try:
+                    await asyncio.wait_for(init_task, timeout=2.0)
+                except asyncio.CancelledError:
+                    logger.debug("Init task cancelled successfully")
+                except TimeoutError:
+                    logger.warning("Init task cleanup timed out")
+                except Exception as e:
+                    logger.debug(f"Init task cleanup completed with: {e}")
+
             # Clean up the monitor task gracefully
             if monitor_task and not monitor_task.done():
                 logger.debug("Cleaning up shutdown monitor task")
@@ -268,6 +359,30 @@ async def handle_stdio(config: Config, log_level: str):
 
         if not disable_console_logging:
             logger.info("Setting up stdio handler...")
+
+        # Deferred imports - these load heavy dependencies (openai, spacy, etc.)
+        # Run in thread pool to avoid blocking the event loop
+        if not disable_console_logging:
+            logger.info("Loading heavy modules in background thread...")
+
+        def do_heavy_imports():
+            """Run heavy imports in a thread to avoid blocking event loop."""
+            from .mcp import MCPHandler
+            from .search.engine import SearchEngine
+            from .search.processor import QueryProcessor
+
+            return SearchEngine, QueryProcessor, MCPHandler
+
+        loop = asyncio.get_event_loop()
+        SearchEngine, QueryProcessor, MCPHandler = await loop.run_in_executor(
+            None, do_heavy_imports
+        )
+
+        if not disable_console_logging:
+            logger.info("Heavy modules loaded successfully")
+
+        # Upgrade logging from minimal to full now that heavy imports are done
+        LoggingConfig.upgrade_from_minimal()
 
         # Initialize components
         search_engine = SearchEngine()
@@ -490,7 +605,9 @@ def cli(
             load_dotenv(env)
 
         # Setup logging (force-disable console logging in stdio transport)
-        _setup_logging(log_level, transport)
+        # Use minimal mode for fast startup - full logging enabled after heavy imports
+        # This applies to both HTTP and stdio transports
+        _setup_logging(log_level, transport, minimal=True)
 
         # Log env file load after logging is configured to avoid duplicate handler setup
         if env:
