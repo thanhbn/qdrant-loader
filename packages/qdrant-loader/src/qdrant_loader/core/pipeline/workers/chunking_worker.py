@@ -1,5 +1,6 @@
 """Chunking worker for processing documents into chunks."""
 
+import sys
 import asyncio
 import concurrent.futures
 from collections.abc import AsyncIterator
@@ -15,6 +16,42 @@ from .base_worker import BaseWorker
 
 logger = LoggingConfig.get_logger(__name__)
 
+def _detect_environment() -> dict:
+    """Detect runtime environment for adaptive scaling."""
+    env_info = {
+        "platform": sys.platform,
+        "is_wsl": False,
+        "is_windows": sys.platform == "win32",
+        "is_mac": sys.platform == "darwin",
+        "is_linux": sys.platform == "linux",
+        "total_memory_gb": psutil.virtual_memory().total / (1024**3),
+        "cpu_count": psutil.cpu_count() or 1,
+    }
+
+    # Detect WSL
+    if sys.platform == "linux":
+        try:
+            with open("/proc/version", "r") as f:
+                if "microsoft" in f.read().lower():
+                    env_info["is_wsl"] = True
+        except Exception:
+            pass
+
+    return env_info
+
+
+_ENV_INFO = _detect_environment()
+
+
+def _get_memory_pressure() -> dict:
+    """Get current memory pressure info."""
+    mem = psutil.virtual_memory()
+    return {
+        "available_gb": mem.available / (1024**3),
+        "percent_used": mem.percent,
+        "is_high_pressure": mem.percent > 80,
+        "is_critical": mem.percent > 90,
+    }
 
 class ChunkingWorker(BaseWorker):
     """Handles document chunking with controlled concurrency."""
@@ -31,6 +68,15 @@ class ChunkingWorker(BaseWorker):
         self.chunking_service = chunking_service
         self.chunk_executor = chunk_executor
         self.shutdown_event = shutdown_event or asyncio.Event()
+        self._active_tasks = 0  # NEW: Track concurrent tasks
+
+        # NEW: Log environment info once
+        logger.info(
+            f"ChunkingWorker initialized - Environment: "
+            f"platform={_ENV_INFO['platform']}, "
+            f"is_wsl={_ENV_INFO['is_wsl']}, "
+            f"total_memory={_ENV_INFO['total_memory_gb']:.1f}GB"
+        )
 
     async def process(self, document: Document) -> list:
         """Process a single document into chunks.
@@ -199,43 +245,70 @@ class ChunkingWorker(BaseWorker):
             logger.debug("ChunkingWorker exited")
 
     def _calculate_adaptive_timeout(self, document: Document) -> float:
-        """Calculate adaptive timeout based on document characteristics.
-
-        Args:
-            document: The document to calculate timeout for
-
-        Returns:
-            Timeout in seconds
-        """
+        """Calculate adaptive timeout based on document AND environment."""
         doc_size = len(document.content)
 
-        # More generous base timeouts to reduce false positives
-        if doc_size < 1_000:  # Very small files (< 1KB)
-            base_timeout = 30.0  # Increased from 10.0
-        elif doc_size < 10_000:  # Small files (< 10KB)
-            base_timeout = 60.0  # Increased from 20.0
-        elif doc_size < 50_000:  # Medium files (10-50KB)
-            base_timeout = 120.0  # Increased from 60.0
-        elif doc_size < 100_000:  # Large files (50-100KB)
-            base_timeout = 240.0  # Increased from 120.0
-        else:  # Very large files (> 100KB)
-            base_timeout = 360.0  # Increased from 180.0
+        # Base timeouts by document size
+        if doc_size < 1_000:
+            base_timeout = 30.0
+        elif doc_size < 10_000:
+            base_timeout = 60.0
+        elif doc_size < 50_000:
+            base_timeout = 120.0
+        elif doc_size < 100_000:
+            base_timeout = 240.0
+        else:
+            base_timeout = 360.0
 
-        # Special handling for HTML files which can have complex structures
+        # === Environment-based adjustments ===
+        
+        # WSL has significant I/O overhead
+        if _ENV_INFO["is_wsl"]:
+            base_timeout *= 2.0
+
+        # Low memory systems need more time
+        if _ENV_INFO["total_memory_gb"] < 8:
+            base_timeout *= 1.5
+
+        # Check current memory pressure
+        mem_pressure = _get_memory_pressure()
+        if mem_pressure["is_high_pressure"]:
+            base_timeout *= 1.5
+        if mem_pressure["is_critical"]:
+            base_timeout *= 2.0
+
+        # === Content-based adjustments ===
         if document.content_type and document.content_type.lower() == "html":
-            base_timeout *= 1.5  # Give HTML files 50% more time
+            base_timeout *= 1.5
 
-        # Special handling for converted files which often have complex markdown
         if hasattr(document, "metadata") and document.metadata.get("conversion_method"):
-            base_timeout *= 1.5  # Give converted files 50% more time
+            base_timeout *= 1.5
 
-        # Additional scaling factors
-        size_factor = min(doc_size / 50000, 4.0)  # Up to 4x for very large files
-
-        # Final adaptive timeout
+        # Size-based scaling
+        size_factor = min(doc_size / 50000, 4.0)
         adaptive_timeout = base_timeout * (1 + size_factor)
 
-        # Increased maximum timeout to handle complex documents
-        return min(
-            adaptive_timeout, 600.0
-        )  # 10 minute maximum (increased from 5 minutes)
+        # Concurrency adjustment
+        if self._active_tasks > 5:
+            adaptive_timeout *= 1.2
+
+        # Environment-aware max timeout
+        max_timeout = 900.0 if _ENV_INFO["is_wsl"] else 600.0
+        
+        return min(adaptive_timeout, max_timeout)
+
+    def _get_effective_max_workers(self) -> int:
+        """Calculate effective max workers based on environment."""
+        effective = self.max_workers
+
+        if _ENV_INFO["is_wsl"]:
+            effective = max(1, effective // 2)
+            
+        if _ENV_INFO["total_memory_gb"] < 8:
+            effective = max(1, min(effective, 4))
+
+        mem_pressure = _get_memory_pressure()
+        if mem_pressure["is_high_pressure"]:
+            effective = max(1, effective // 2)
+
+        return effective

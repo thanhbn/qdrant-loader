@@ -1,3 +1,14 @@
+# ============================================================
+# LEARNING: detectors.py
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader-mcp-server/src/qdrant_loader_mcp_server/search/enhanced/cdi/detectors.py
+# Learning Objectives:
+# - [ ] Understand vector similarity thresholds for conflict detection
+# - [ ] Understand multi-method conflict detection (text + metadata + LLM)
+# - [ ] Understand conflict aggregation and result merging
+# - [ ] Understand the ConflictDetector class architecture
+# ============================================================
+
 """
 Conflict Detection for Cross-Document Intelligence.
 
@@ -76,13 +87,20 @@ class ConflictDetector:
         self.logger = LoggingConfig.get_logger(__name__)
         self.preferred_vector_name = preferred_vector_name
 
-        # Vector similarity thresholds
+        # TODO [L1]: Define vector similarity thresholds
+        # Use Case: Filter document pairs by semantic similarity before analysis
+        # Business Rule: Documents outside [0.4, 0.98] range are not conflicting:
+        #   - Too low (<0.4): Documents are unrelated topics
+        #   - Too high (>0.98): Documents are likely duplicates
+        # Git: "Enhanced conflict detection and similarity calculations" (commit 2a3cd6b)
+        # -----------------------------------------------------------
         self.MIN_VECTOR_SIMILARITY = (
-            0.6  # Minimum similarity to consider for conflict analysis
+            0.4  # Minimum similarity to consider for conflict analysis
         )
         self.MAX_VECTOR_SIMILARITY = (
-            0.95  # Maximum similarity - too similar suggests same content
+            0.98  # Maximum similarity - too similar suggests same content
         )
+        # -----------------------------------------------------------
 
         # LLM validation settings
         self.llm_enabled = qdrant_client is not None and openai_client is not None
@@ -116,42 +134,78 @@ class ConflictDetector:
         return _analyze_metadata_conflicts_ext(self, doc1, doc2)
 
     async def detect_conflicts(self, documents: list[SearchResult]) -> ConflictAnalysis:
-        """Detect conflicts between documents using multiple analysis methods."""
-        start_time = time.time()
-        conflicts: list[ConflictAnalysis] = []
+        """Detect conflicts between documents using multiple analysis methods.
 
+        Use Case: Main entry point for conflict detection between documents
+        Business Rule: Uses multi-method detection (text + metadata + LLM)
+        Git: "CDI Module Consolidation" (commit 9bc4aa9)
+        Test: test_detect_conflicts
+        """
+        start_time = time.time()
+        conflicts: list[dict[str, Any] | ConflictAnalysis] = []
+
+        # TODO [L1]: Validate minimum document count
+        # Business Rule: Need at least 2 documents to detect conflicts
+        # -----------------------------------------------------------
         if len(documents) < 2:
             self.logger.debug("Need at least 2 documents for conflict detection")
             return ConflictAnalysis()
+        # -----------------------------------------------------------
 
         try:
-            # Precompute embeddings once
+            # TODO [L1]: Precompute embeddings for all documents
+            # Use Case: Batch fetch embeddings for efficient similarity calculations
+            # Data Flow: documents -> document_ids -> Qdrant -> embeddings dict
+            # -----------------------------------------------------------
             document_ids = [
                 getattr(doc, "document_id", f"{doc.source_type}:{doc.source_title}")
                 for doc in documents
             ]
             embeddings = await self._get_document_embeddings(document_ids)
+            # -----------------------------------------------------------
 
+            self.logger.debug(
+                f"Conflict detection: {len(documents)} documents, {len(embeddings)} embeddings found"
+            )
+
+            # TODO [L1]: Define pair analysis function
+            # Use Case: Analyze a document pair for conflicts using multiple methods
+            # Business Rule: Combines vector similarity, text, and metadata analysis
+            # -----------------------------------------------------------
             def analyze_pair(
                 doc1: SearchResult, doc2: SearchResult, doc1_id: str, doc2_id: str
-            ) -> ConflictAnalysis | None:
+            ) -> dict[str, Any] | None:
+                """Analyze a pair and return conflict info dict if conflict found."""
                 vector_similarity = 0.0
-                if doc1_id in embeddings and doc2_id in embeddings:
+                has_embeddings = doc1_id in embeddings and doc2_id in embeddings
+
+                # TODO [L1]: Calculate vector similarity and skip duplicates
+                # Business Rule: Skip pairs with similarity > MAX_VECTOR_SIMILARITY (0.98)
+                # -----------------------------------------------------------
+                if has_embeddings:
                     vector_similarity = self._calculate_vector_similarity(
                         embeddings[doc1_id], embeddings[doc2_id]
                     )
-                    if (
-                        vector_similarity > self.MAX_VECTOR_SIMILARITY
-                        or vector_similarity < self.MIN_VECTOR_SIMILARITY
-                    ):
+                    # Only skip if documents are too similar (likely same content)
+                    if vector_similarity > self.MAX_VECTOR_SIMILARITY:
+                        self.logger.debug(
+                            f"Skipping pair (too similar): {doc1_id[:30]}... vs {doc2_id[:30]}... "
+                            f"(similarity: {vector_similarity:.3f})"
+                        )
                         return None
+                # -----------------------------------------------------------
 
+                # TODO [L1]: Perform multi-method conflict analysis
+                # Use Case: Analyze using both text (spaCy) and metadata methods
+                # Business Rule: Always run both analyses regardless of embeddings
+                # -----------------------------------------------------------
                 text_conflict, text_explanation, text_confidence = (
                     self._analyze_text_conflicts(doc1, doc2)
                 )
                 metadata_conflict, metadata_explanation, metadata_confidence = (
                     self._analyze_metadata_conflicts(doc1, doc2)
                 )
+                # -----------------------------------------------------------
 
                 llm_conflict = False
                 llm_explanation = ""
@@ -162,24 +216,32 @@ class ConflictDetector:
                     # Inlined await is not possible in nested def; handled outside
                     pass
 
-                if not (text_conflict or metadata_conflict or llm_conflict):
-                    return None
+                # Create conflict info dict if any analysis detected issues
+                if text_conflict or metadata_conflict or llm_conflict:
+                    combined_confidence = max(
+                        text_confidence, metadata_confidence, llm_confidence
+                    )
+                    self.logger.debug(
+                        f"Conflict detected: {doc1.source_title} vs {doc2.source_title} "
+                        f"(text={text_conflict}, metadata={metadata_conflict}, confidence={combined_confidence:.2f})"
+                    )
+                    # Return conflict info as dict (not ConflictAnalysis object)
+                    conflict_type = "text_conflict" if text_conflict else "metadata_conflict"
+                    return {
+                        "doc1_id": doc1_id,
+                        "doc2_id": doc2_id,
+                        "doc1_title": doc1.source_title,
+                        "doc1_source": doc1.source_type,
+                        "doc2_title": doc2.source_title,
+                        "doc2_source": doc2.source_type,
+                        "type": conflict_type,
+                        "confidence": combined_confidence,
+                        "vector_similarity": vector_similarity,
+                        "description": f"Text: {text_explanation}; Metadata: {metadata_explanation}",
+                        "detected_at": datetime.now().isoformat(),
+                    }
 
-                combined_confidence = max(
-                    text_confidence, metadata_confidence, llm_confidence
-                )
-                return ConflictAnalysis(
-                    document1_title=doc1.source_title,
-                    document1_source=doc1.source_type,
-                    document2_title=doc2.source_title,
-                    document2_source=doc2.source_type,
-                    conflict_type="content_conflict",
-                    confidence_score=combined_confidence,
-                    vector_similarity=vector_similarity,
-                    analysis_method="multi_method",
-                    explanation=f"Text: {text_explanation}; Metadata: {metadata_explanation}; LLM: {llm_explanation}",
-                    detected_at=datetime.now(),
-                )
+                return None
 
             for i, doc1 in enumerate(documents):
                 for j, doc2 in enumerate(documents[i + 1 :], i + 1):
@@ -204,25 +266,25 @@ class ConflictDetector:
                                 )
                             )
                             if llm_conflict:
-                                conflicts.append(
-                                    ConflictAnalysis(
-                                        document1_title=doc1.source_title,
-                                        document1_source=doc1.source_type,
-                                        document2_title=doc2.source_title,
-                                        document2_source=doc2.source_type,
-                                        conflict_type="content_conflict",
-                                        confidence_score=llm_confidence,
-                                        vector_similarity=vector_similarity,
-                                        analysis_method="multi_method",
-                                        explanation=f"LLM: {llm_explanation}",
-                                        detected_at=datetime.now(),
-                                    )
-                                )
+                                # Create conflict info as dict (not ConflictAnalysis object)
+                                conflicts.append({
+                                    "doc1_id": doc1_id,
+                                    "doc2_id": doc2_id,
+                                    "doc1_title": doc1.source_title,
+                                    "doc1_source": doc1.source_type,
+                                    "doc2_title": doc2.source_title,
+                                    "doc2_source": doc2.source_type,
+                                    "type": "content_conflict",
+                                    "confidence": llm_confidence,
+                                    "vector_similarity": vector_similarity,
+                                    "description": f"LLM: {llm_explanation}",
+                                    "detected_at": datetime.now().isoformat(),
+                                })
                         continue
 
                     # If baseline exists and LLM applies, enrich with LLM
                     if self.llm_enabled:
-                        vector_similarity = baseline.vector_similarity or 0.0
+                        vector_similarity = baseline.get("vector_similarity", 0.0) or 0.0
                         if (
                             vector_similarity <= 0.0
                             and doc1_id in embeddings
@@ -238,11 +300,11 @@ class ConflictDetector:
                                 )
                             )
                             if llm_conflict:
-                                baseline.confidence_score = max(
-                                    baseline.confidence_score, llm_confidence
+                                baseline["confidence"] = max(
+                                    baseline.get("confidence", 0.0), llm_confidence
                                 )
-                                baseline.explanation = (
-                                    baseline.explanation + f"; LLM: {llm_explanation}"
+                                baseline["description"] = (
+                                    baseline.get("description", "") + f"; LLM: {llm_explanation}"
                                 )
 
                     conflicts.append(baseline)
@@ -256,13 +318,23 @@ class ConflictDetector:
                 llm_analysis=self.llm_enabled,
             )
 
-            # Build merged ConflictAnalysis from collected results
+            # TODO [L1]: Build merged ConflictAnalysis from collected results
+            # Use Case: Aggregate all detected conflicts into a single result object
+            # Data Flow: list of conflict dicts/objects -> ConflictAnalysis
+            # Business Rule: Supports multiple formats (dict, tuple, ConflictAnalysis)
+            # -----------------------------------------------------------
             merged_conflicting_pairs: list[tuple[str, str, dict[str, Any]]] = []
             merged_conflict_categories: defaultdict[str, list[tuple[str, str]]] = (
                 defaultdict(list)
             )
             merged_resolution_suggestions: dict[str, str] = {}
+            # -----------------------------------------------------------
 
+            # TODO [L1]: Process each conflict and categorize by type
+            # Use Case: Normalize different conflict formats into unified structure
+            # Business Rule: Handle 3 formats: ConflictAnalysis, dict, tuple
+            # Git: "CDI Module Consolidation" (commit 9bc4aa9)
+            # -----------------------------------------------------------
             for conflict in conflicts:
                 # Preferred: ConflictAnalysis objects
                 if isinstance(conflict, ConflictAnalysis):
@@ -275,6 +347,33 @@ class ConflictDetector:
                         merged_resolution_suggestions.update(
                             conflict.resolution_suggestions
                         )
+                    continue
+
+                # Handle dict conflicts (new format from analyze_pair)
+                if isinstance(conflict, dict):
+                    doc1_id = conflict.get("doc1_id", "unknown")
+                    doc2_id = conflict.get("doc2_id", "unknown")
+                    conflict_type = conflict.get("type", "unknown")
+
+                    # Build conflict info dict for the pair
+                    conflict_info = {
+                        "doc1_title": conflict.get("doc1_title"),
+                        "doc1_source": conflict.get("doc1_source"),
+                        "doc2_title": conflict.get("doc2_title"),
+                        "doc2_source": conflict.get("doc2_source"),
+                        "type": conflict_type,
+                        "confidence": conflict.get("confidence", 0.0),
+                        "vector_similarity": conflict.get("vector_similarity", 0.0),
+                        "description": conflict.get("description", ""),
+                        "detected_at": conflict.get("detected_at"),
+                    }
+
+                    merged_conflicting_pairs.append(
+                        (str(doc1_id), str(doc2_id), conflict_info)
+                    )
+                    merged_conflict_categories[conflict_type].append(
+                        (str(doc1_id), str(doc2_id))
+                    )
                     continue
 
                 # Backward-compat: tuples like (doc1_id, doc2_id, conflict_info)
@@ -300,6 +399,7 @@ class ConflictDetector:
                 except Exception:
                     # Ignore malformed entries
                     pass
+            # -----------------------------------------------------------
 
             return ConflictAnalysis(
                 conflicting_pairs=merged_conflicting_pairs,
@@ -314,7 +414,12 @@ class ConflictDetector:
             )
             return ConflictAnalysis()
 
-    # Compatibility methods for tests - delegate via legacy adapter
+    # TODO [L2]: Compatibility methods for tests - delegate via legacy adapter
+    # Use Case: Maintain backward compatibility with existing test suite
+    # Business Rule: Delegate pattern detection to LegacyConflictDetectorAdapter
+    # Git: "CDI Module Consolidation" (commit 9bc4aa9)
+    # Test: test_find_contradiction_patterns_*
+    # -----------------------------------------------------------
     def _find_contradiction_patterns(self, doc1, doc2):
         try:
             adapter = getattr(self, "_legacy_adapter", None)
@@ -366,6 +471,7 @@ class ConflictDetector:
 
     def _calculate_conflict_confidence(self, patterns, doc1_score=1.0, doc2_score=1.0):
         return _calculate_confidence_ext(self, patterns, doc1_score, doc2_score)
+    # -----------------------------------------------------------
 
     # --- Public stats accessor to avoid leaking private attributes ---
     def get_stats(self) -> dict:
@@ -392,7 +498,11 @@ class ConflictDetector:
         except Exception:
             return {}
 
-    # Additional compatibility methods for tests
+    # TODO [L2]: Additional compatibility methods for tests
+    # Use Case: Pre-filter documents before expensive conflict analysis
+    # Business Rule: Token intersection with 20% overlap threshold
+    # Test: test_have_content_overlap
+    # -----------------------------------------------------------
     def _have_content_overlap(self, doc1: SearchResult, doc2: SearchResult) -> bool:
         """Check if two documents have content overlap (compatibility method)."""
         # Simple content overlap check using token intersection
@@ -409,7 +519,13 @@ class ConflictDetector:
         # Use intersection over minimum set size for better sensitivity
         overlap_ratio = len(intersection) / min_tokens
         return overlap_ratio > 0.2  # 20% overlap threshold (more sensitive)
+    # -----------------------------------------------------------
 
+    # TODO [L2]: Semantic similarity using spaCy
+    # Use Case: Determine if documents discuss similar topics
+    # Business Rule: Explicit topic separation (food vs tech), spaCy similarity >0.5
+    # Test: test_have_semantic_similarity
+    # -----------------------------------------------------------
     def _have_semantic_similarity(self, doc1: SearchResult, doc2: SearchResult) -> bool:
         """Check if two documents have semantic similarity (compatibility method)."""
         try:
@@ -494,6 +610,7 @@ class ConflictDetector:
         except Exception:
             # Ultimate fallback - be conservative
             return False
+    # -----------------------------------------------------------
 
     def _describe_conflict(self, indicators: list) -> str:
         return _describe_conflict_ext(self, indicators)
@@ -506,6 +623,11 @@ class ConflictDetector:
     ) -> dict | None:
         return await _llm_analyze_conflicts_ext(self, doc1, doc2, similarity_score)
 
+    # TODO [L2]: Tiered analysis pairs generation
+    # Use Case: Prioritize document pairs based on relevance scores
+    # Business Rule: Tiers based on average score: primary (>=0.8), secondary (>=0.5), tertiary (<0.5)
+    # Test: test_get_tiered_analysis_pairs
+    # -----------------------------------------------------------
     async def _get_tiered_analysis_pairs(
         self, documents: list[SearchResult]
     ) -> list[tuple]:
@@ -539,12 +661,18 @@ class ConflictDetector:
         # Sort by score (highest first)
         pairs.sort(key=lambda x: x[3], reverse=True)
         return pairs
+    # -----------------------------------------------------------
 
     async def _filter_by_vector_similarity(
         self, documents: list[SearchResult]
     ) -> list[tuple]:
         return await _filter_by_vector_similarity_ext(self, documents)
 
+    # TODO [L2]: Pre-screening for conflict analysis eligibility
+    # Use Case: Quick filter to skip invalid document pairs
+    # Business Rule: Skip if None, text <10 chars, same ID, or identical content
+    # Test: test_should_analyze_for_conflicts_edge_cases
+    # -----------------------------------------------------------
     def _should_analyze_for_conflicts(
         self, doc1: SearchResult, doc2: SearchResult
     ) -> bool:
@@ -570,3 +698,4 @@ class ConflictDetector:
             return False
 
         return True
+    # -----------------------------------------------------------

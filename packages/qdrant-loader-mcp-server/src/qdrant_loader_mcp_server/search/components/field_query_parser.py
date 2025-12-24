@@ -163,27 +163,12 @@ class FieldQueryParser:
                     payload_key, field_query.field_value
                 )
 
-                # Handle nested fields (e.g., metadata.chunk_index)
-                if "." in payload_key:
-                    parts = payload_key.split(".", 1)
-                    condition = models.NestedCondition(
-                        nested=models.Nested(
-                            key=parts[0],
-                            filter=models.Filter(
-                                must=[
-                                    models.FieldCondition(
-                                        key=parts[1],
-                                        match=models.MatchValue(value=match_value),
-                                    )
-                                ]
-                            ),
-                        )
-                    )
-                else:
-                    # For top-level fields, use direct field condition
-                    condition = models.FieldCondition(
-                        key=payload_key, match=models.MatchValue(value=match_value)
-                    )
+                # Handle all fields uniformly using dot notation
+                # NOTE: We use dot notation (e.g., metadata.chunk_index) instead of NestedCondition
+                # because metadata is stored as a regular JSON object, not indexed as a nested type.
+                condition = models.FieldCondition(
+                    key=payload_key, match=models.MatchValue(value=match_value)
+                )
 
                 must_conditions.append(condition)
                 self.logger.debug(
@@ -197,31 +182,26 @@ class FieldQueryParser:
             else False
         )
         if project_ids and not has_project_id_field_query:
-            # Support both top-level project_id and nested metadata.project_id, and root 'source'
+            # Support both top-level project_id, metadata.project_id (via dot notation), and root 'source'
+            # NOTE: We use dot notation (metadata.project_id) instead of NestedCondition because
+            # the metadata field is stored as a regular JSON object, not indexed as a nested type.
+            # NestedCondition only works with fields explicitly indexed as nested in Qdrant,
+            # which is designed for arrays of objects where you need atomic filtering within each element.
             top_level = models.FieldCondition(
                 key="project_id", match=models.MatchAny(any=project_ids)
             )
             top_level_source = models.FieldCondition(
                 key="source", match=models.MatchAny(any=project_ids)
             )
-            nested_meta = models.NestedCondition(
-                nested=models.Nested(
-                    key="metadata",
-                    filter=models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="project_id",
-                                match=models.MatchAny(any=project_ids),
-                            )
-                        ]
-                    ),
-                )
+            # Use dot notation for accessing nested metadata.project_id
+            metadata_project_id = models.FieldCondition(
+                key="metadata.project_id", match=models.MatchAny(any=project_ids)
             )
 
             # Use OR semantics so either storage layout matches
-            should_conditions.extend([top_level, top_level_source, nested_meta])
+            should_conditions.extend([top_level, top_level_source, metadata_project_id])
             self.logger.debug(
-                f"Added project filter (top-level or nested): {project_ids}"
+                f"Added project filter (top-level or metadata.project_id): {project_ids}"
             )
         elif project_ids and has_project_id_field_query:
             self.logger.debug(

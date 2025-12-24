@@ -216,9 +216,15 @@ class IntelligenceResultFormatters:
                 # severity currently unused in formatted output
                 conflict_type = conflict.get("conflict_type", "unknown")
 
-            formatted += f"**{i}. Conflict Type: {conflict_type}**\n"
-            formatted += f"• Document 1: {doc1_title}\n"
-            formatted += f"• Document 2: {doc2_title}\n"
+            formatted += f"**{i}. {conflict_type.replace('_', ' ').title()}**\n"
+            formatted += f"• Source A: {doc1_title}\n"
+            formatted += f"• Source B: {doc2_title}\n"
+
+            # Show description if available
+            if isinstance(conflict, dict):
+                description = conflict.get("conflict_description", "") or conflict.get("description", "")
+                if description:
+                    formatted += f"• Details: {description}\n"
 
             # Only check for conflicting_statements in dict format
             if isinstance(conflict, dict) and "conflicting_statements" in conflict:
