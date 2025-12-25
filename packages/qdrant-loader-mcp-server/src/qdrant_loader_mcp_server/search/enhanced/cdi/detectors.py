@@ -1,12 +1,14 @@
 # ============================================================
-# LEARNING: detectors.py
+# LEARNING: detectors.py - AIKH-488 (SPIKE-008: Validate detect_document_conflicts)
 # This file has been annotated with TODO markers for learning.
 # To restore: git checkout -- packages/qdrant-loader-mcp-server/src/qdrant_loader_mcp_server/search/enhanced/cdi/detectors.py
+# MCP Tool: detect_document_conflicts
 # Learning Objectives:
-# - [ ] Understand vector similarity thresholds for conflict detection
-# - [ ] Understand multi-method conflict detection (text + metadata + LLM)
-# - [ ] Understand conflict aggregation and result merging
-# - [ ] Understand the ConflictDetector class architecture
+# - [ ] L1: Understand vector similarity thresholds (AIKH-488/AIKH-601: TC-CONFLICT-001)
+# - [ ] L1: Understand multi-method conflict detection (AIKH-488/AIKH-607: TC-CONFLICT-007)
+# - [ ] L1: Understand conflict aggregation (AIKH-488/AIKH-605: TC-CONFLICT-005)
+# - [ ] L2: Understand tiered filtering (AIKH-488/AIKH-607: TC-CONFLICT-007)
+# - [ ] L3: Understand LLM validation tier (AIKH-488/AIKH-603: TC-CONFLICT-003)
 # ============================================================
 
 """
@@ -87,12 +89,14 @@ class ConflictDetector:
         self.logger = LoggingConfig.get_logger(__name__)
         self.preferred_vector_name = preferred_vector_name
 
-        # TODO [L1]: Define vector similarity thresholds
-        # Use Case: Filter document pairs by semantic similarity before analysis
-        # Business Rule: Documents outside [0.4, 0.98] range are not conflicting:
-        #   - Too low (<0.4): Documents are unrelated topics
-        #   - Too high (>0.98): Documents are likely duplicates
+        # TODO [L1]: Define vector similarity thresholds - AIKH-488/AIKH-601 (TC-CONFLICT-001)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Filter document pairs by semantic similarity before conflict analysis
+        # Business Rule: Documents outside [0.4, 0.98] similarity range are not conflicting:
+        #   - Below 0.4: Documents discuss unrelated topics (no conflict possible)
+        #   - Above 0.98: Documents are likely duplicates (same content, not conflict)
         # Git: "Enhanced conflict detection and similarity calculations" (commit 2a3cd6b)
+        # Test: test_detect_conflicts_basic_functionality
         # -----------------------------------------------------------
         self.MIN_VECTOR_SIMILARITY = (
             0.4  # Minimum similarity to consider for conflict analysis
@@ -144,8 +148,11 @@ class ConflictDetector:
         start_time = time.time()
         conflicts: list[dict[str, Any] | ConflictAnalysis] = []
 
-        # TODO [L1]: Validate minimum document count
-        # Business Rule: Need at least 2 documents to detect conflicts
+        # TODO [L1]: Validate minimum document count - AIKH-488/AIKH-611 (TC-CONFLICT-011)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Handle edge case when insufficient documents provided
+        # Business Rule: Need at least 2 documents to detect conflicts (single doc = no conflict)
+        # Test: test_detect_conflicts_insufficient_documents
         # -----------------------------------------------------------
         if len(documents) < 2:
             self.logger.debug("Need at least 2 documents for conflict detection")
@@ -153,9 +160,12 @@ class ConflictDetector:
         # -----------------------------------------------------------
 
         try:
-            # TODO [L1]: Precompute embeddings for all documents
-            # Use Case: Batch fetch embeddings for efficient similarity calculations
-            # Data Flow: documents -> document_ids -> Qdrant -> embeddings dict
+            # TODO [L2]: Precompute embeddings for all documents - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+            # MCP Tool: detect_document_conflicts
+            # Use Case: Batch fetch embeddings for efficient vector similarity calculations
+            # Data Flow: documents -> document_ids -> Qdrant scroll API -> embeddings dict
+            # Business Rule: Pre-fetch all embeddings to avoid N+1 queries during pair analysis
+            # Test: test_embedding_similarity_tier
             # -----------------------------------------------------------
             document_ids = [
                 getattr(doc, "document_id", f"{doc.source_type}:{doc.source_title}")
@@ -168,9 +178,12 @@ class ConflictDetector:
                 f"Conflict detection: {len(documents)} documents, {len(embeddings)} embeddings found"
             )
 
-            # TODO [L1]: Define pair analysis function
-            # Use Case: Analyze a document pair for conflicts using multiple methods
-            # Business Rule: Combines vector similarity, text, and metadata analysis
+            # TODO [L1]: Define pair analysis function - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+            # MCP Tool: detect_document_conflicts
+            # Use Case: Analyze a document pair for conflicts using tiered multi-method analysis
+            # Business Rule: Combines vector similarity + text analysis (spaCy) + metadata analysis
+            # Data Flow: (doc1, doc2) -> vector check -> text analysis -> metadata analysis -> conflict dict
+            # Test: test_tiered_filtering
             # -----------------------------------------------------------
             def analyze_pair(
                 doc1: SearchResult, doc2: SearchResult, doc1_id: str, doc2_id: str
@@ -179,8 +192,12 @@ class ConflictDetector:
                 vector_similarity = 0.0
                 has_embeddings = doc1_id in embeddings and doc2_id in embeddings
 
-                # TODO [L1]: Calculate vector similarity and skip duplicates
-                # Business Rule: Skip pairs with similarity > MAX_VECTOR_SIMILARITY (0.98)
+                # TODO [L2]: Calculate vector similarity and skip duplicates - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+                # MCP Tool: detect_document_conflicts
+                # Use Case: Compute cosine similarity between document embeddings
+                # Business Rule: Skip pairs with similarity > 0.98 (likely duplicates, not conflicts)
+                # Data Flow: embeddings dict -> cosine similarity -> float [0.0, 1.0]
+                # Test: test_embedding_similarity_tier
                 # -----------------------------------------------------------
                 if has_embeddings:
                     vector_similarity = self._calculate_vector_similarity(
@@ -195,9 +212,13 @@ class ConflictDetector:
                         return None
                 # -----------------------------------------------------------
 
-                # TODO [L1]: Perform multi-method conflict analysis
-                # Use Case: Analyze using both text (spaCy) and metadata methods
-                # Business Rule: Always run both analyses regardless of embeddings
+                # TODO [L1]: Perform multi-method conflict analysis - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+                # MCP Tool: detect_document_conflicts
+                # Use Case: Analyze using text (spaCy NLP) and metadata conflict detection methods
+                # Business Rule: Always run both analyses regardless of embedding availability:
+                #   - Text analysis: spaCy entity/keyword extraction, conflict indicators
+                #   - Metadata analysis: date differences, source types, project conflicts
+                # Test: test_tiered_filtering, test_text_metadata_analysis
                 # -----------------------------------------------------------
                 text_conflict, text_explanation, text_confidence = (
                     self._analyze_text_conflicts(doc1, doc2)
@@ -318,10 +339,15 @@ class ConflictDetector:
                 llm_analysis=self.llm_enabled,
             )
 
-            # TODO [L1]: Build merged ConflictAnalysis from collected results
-            # Use Case: Aggregate all detected conflicts into a single result object
-            # Data Flow: list of conflict dicts/objects -> ConflictAnalysis
-            # Business Rule: Supports multiple formats (dict, tuple, ConflictAnalysis)
+            # TODO [L1]: Build merged ConflictAnalysis from collected results - AIKH-488/AIKH-605 (TC-CONFLICT-005)
+            # MCP Tool: detect_document_conflicts
+            # Use Case: Aggregate all detected conflicts into unified ConflictAnalysis response
+            # Data Flow: list of conflict dicts/objects -> merged ConflictAnalysis with:
+            #   - conflicting_pairs: list of (doc1_id, doc2_id, conflict_info)
+            #   - conflict_categories: dict mapping conflict type to pair list
+            #   - resolution_suggestions: dict of suggested fixes
+            # Business Rule: Supports multiple input formats for backward compatibility
+            # Test: test_confidence_score_in_response
             # -----------------------------------------------------------
             merged_conflicting_pairs: list[tuple[str, str, dict[str, Any]]] = []
             merged_conflict_categories: defaultdict[str, list[tuple[str, str]]] = (
@@ -330,10 +356,16 @@ class ConflictDetector:
             merged_resolution_suggestions: dict[str, str] = {}
             # -----------------------------------------------------------
 
-            # TODO [L1]: Process each conflict and categorize by type
-            # Use Case: Normalize different conflict formats into unified structure
-            # Business Rule: Handle 3 formats: ConflictAnalysis, dict, tuple
+            # TODO [L1]: Process each conflict and categorize by type - AIKH-488/AIKH-604 (TC-CONFLICT-004)
+            # MCP Tool: detect_document_conflicts
+            # Use Case: Normalize different conflict formats and classify by conflict type
+            # Business Rule: Handle 3 input formats for backward compatibility:
+            #   - ConflictAnalysis objects: Extract pairs, categories, suggestions
+            #   - dict: New format from analyze_pair with doc IDs, type, confidence
+            #   - tuple: Legacy format (doc1_id, doc2_id, conflict_info)
+            # Conflict Types: text_conflict, metadata_conflict, content_conflict, unknown
             # Git: "CDI Module Consolidation" (commit 9bc4aa9)
+            # Test: test_conflict_type_classification
             # -----------------------------------------------------------
             for conflict in conflicts:
                 # Preferred: ConflictAnalysis objects
@@ -414,11 +446,15 @@ class ConflictDetector:
             )
             return ConflictAnalysis()
 
-    # TODO [L2]: Compatibility methods for tests - delegate via legacy adapter
-    # Use Case: Maintain backward compatibility with existing test suite
-    # Business Rule: Delegate pattern detection to LegacyConflictDetectorAdapter
+    # TODO [L2]: Compatibility methods for tests - AIKH-488/AIKH-614 (TC-CONFLICT-014)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Maintain backward compatibility with existing test suite via adapter pattern
+    # Business Rule: Delegate pattern detection to LegacyConflictDetectorAdapter for:
+    #   - _find_contradiction_patterns: Find textual contradictions
+    #   - _detect_version_conflicts: Detect version-related conflicts
+    #   - _detect_procedural_conflicts: Detect process/procedure conflicts
     # Git: "CDI Module Consolidation" (commit 9bc4aa9)
-    # Test: test_find_contradiction_patterns_*
+    # Test: test_find_contradiction_patterns_*, test_subtle_conflict_detection
     # -----------------------------------------------------------
     def _find_contradiction_patterns(self, doc1, doc2):
         try:
@@ -498,10 +534,14 @@ class ConflictDetector:
         except Exception:
             return {}
 
-    # TODO [L2]: Additional compatibility methods for tests
-    # Use Case: Pre-filter documents before expensive conflict analysis
-    # Business Rule: Token intersection with 20% overlap threshold
-    # Test: test_have_content_overlap
+    # TODO [L2]: Additional compatibility methods for tests - AIKH-488/AIKH-608 (TC-CONFLICT-008)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Pre-filter documents before expensive conflict analysis (content overlap check)
+    # Business Rule: Token intersection with 20% overlap threshold (Jaccard similarity variant):
+    #   - Tokenize both texts to lowercase word sets
+    #   - Calculate intersection / min(len(set1), len(set2))
+    #   - Return true if ratio > 0.2 (20% overlap)
+    # Test: test_have_content_overlap, test_conflict_evidence_extraction
     # -----------------------------------------------------------
     def _have_content_overlap(self, doc1: SearchResult, doc2: SearchResult) -> bool:
         """Check if two documents have content overlap (compatibility method)."""
@@ -521,10 +561,15 @@ class ConflictDetector:
         return overlap_ratio > 0.2  # 20% overlap threshold (more sensitive)
     # -----------------------------------------------------------
 
-    # TODO [L2]: Semantic similarity using spaCy
-    # Use Case: Determine if documents discuss similar topics
-    # Business Rule: Explicit topic separation (food vs tech), spaCy similarity >0.5
-    # Test: test_have_semantic_similarity
+    # TODO [L2]: Semantic similarity using spaCy - AIKH-488/AIKH-614 (TC-CONFLICT-014)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Determine if documents discuss similar topics using NLP semantic analysis
+    # Business Rule: Multi-tier semantic similarity check:
+    #   1. Explicit topic separation (food vs tech keywords) -> return False if different domains
+    #   2. spaCy doc.similarity() > 0.5 -> return True
+    #   3. Semantic keyword overlap > 50% -> return True
+    #   4. Fallback: content overlap > 50% -> return True
+    # Test: test_have_semantic_similarity, test_subtle_conflict_detection
     # -----------------------------------------------------------
     def _have_semantic_similarity(self, doc1: SearchResult, doc2: SearchResult) -> bool:
         """Check if two documents have semantic similarity (compatibility method)."""
@@ -623,10 +668,15 @@ class ConflictDetector:
     ) -> dict | None:
         return await _llm_analyze_conflicts_ext(self, doc1, doc2, similarity_score)
 
-    # TODO [L2]: Tiered analysis pairs generation
-    # Use Case: Prioritize document pairs based on relevance scores
-    # Business Rule: Tiers based on average score: primary (>=0.8), secondary (>=0.5), tertiary (<0.5)
-    # Test: test_get_tiered_analysis_pairs
+    # TODO [L2]: Tiered analysis pairs generation - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Prioritize document pairs based on relevance scores for efficient analysis
+    # Business Rule: Tier classification by average document score:
+    #   - primary (score >= 0.8): Highest priority, analyze first
+    #   - secondary (score >= 0.5): Medium priority
+    #   - tertiary (score < 0.5): Lowest priority, analyze last
+    # Data Flow: documents -> all pairs -> (doc1, doc2, tier, score) -> sorted by score desc
+    # Test: test_get_tiered_analysis_pairs, test_tiered_filtering
     # -----------------------------------------------------------
     async def _get_tiered_analysis_pairs(
         self, documents: list[SearchResult]
@@ -668,10 +718,15 @@ class ConflictDetector:
     ) -> list[tuple]:
         return await _filter_by_vector_similarity_ext(self, documents)
 
-    # TODO [L2]: Pre-screening for conflict analysis eligibility
-    # Use Case: Quick filter to skip invalid document pairs
-    # Business Rule: Skip if None, text <10 chars, same ID, or identical content
-    # Test: test_should_analyze_for_conflicts_edge_cases
+    # TODO [L2]: Pre-screening for conflict analysis eligibility - AIKH-488/AIKH-611 (TC-CONFLICT-011)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Quick filter to skip invalid document pairs before expensive analysis
+    # Business Rule: Skip pair and return False if any condition met:
+    #   - Either document is None
+    #   - Either document has text < 10 characters
+    #   - Documents have same document_id
+    #   - Documents have identical text content
+    # Test: test_should_analyze_for_conflicts_edge_cases, test_no_conflict_found_handling
     # -----------------------------------------------------------
     def _should_analyze_for_conflicts(
         self, doc1: SearchResult, doc2: SearchResult

@@ -1,3 +1,15 @@
+# ============================================================
+# LEARNING: llm_validation.py - AIKH-488 (SPIKE-008: Validate detect_document_conflicts)
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader-mcp-server/src/qdrant_loader_mcp_server/search/enhanced/cdi/llm_validation.py
+# MCP Tool: detect_document_conflicts
+# Learning Objectives:
+# - [ ] L3: Understand LLM provider abstraction for conflict validation (AIKH-488/AIKH-603: TC-CONFLICT-003)
+# - [ ] L3: Understand structured prompt engineering for conflict detection (AIKH-488/AIKH-603: TC-CONFLICT-003)
+# - [ ] L3: Understand LLM response parsing and validation (AIKH-488/AIKH-603: TC-CONFLICT-003)
+# - [ ] LN: Understand async timeout handling for LLM calls (AIKH-488/AIKH-610: TC-CONFLICT-010)
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio
@@ -7,18 +19,46 @@ from typing import Any
 async def validate_conflict_with_llm(
     detector: Any, doc1: Any, doc2: Any, similarity_score: float
 ) -> tuple[bool, str, float]:
+    """Validate potential conflict using LLM analysis.
+
+    Use Case: Final tier (L3) validation using LLM for conflict confirmation
+    Data Flow: (doc1, doc2, similarity_score) -> LLM prompt -> parse response
+    Business Rule: Returns (conflict_detected, explanation, confidence)
+    Git: "LLM validation integration" - Tier 3 conflict detection
+    """
+    # TODO [L3]: Check LLM provider availability - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Validate that LLM provider is configured for conflict analysis
+    # Business Rule: Support both core LLM provider and legacy AsyncOpenAI client
+    # Test: test_llm_validation_tier
+    # -----------------------------------------------------------
     # Prefer core provider when available; fallback to AsyncOpenAI client if present
     provider = getattr(getattr(detector, "engine", None), "llm_provider", None)
     openai_client = getattr(detector, "openai_client", None)
     if provider is None and openai_client is None:
         return False, "LLM validation not available", 0.0
+    # -----------------------------------------------------------
 
     try:
+        # TODO [LN]: Configure LLM timeout from settings - AIKH-488/AIKH-610 (TC-CONFLICT-010)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Allow per-call customization of LLM timeout for performance tuning
+        # Business Rule: Default timeout 10.0 seconds, configurable via conflict_llm_timeout_s
+        # Test: test_performance_under_10_seconds
+        # -----------------------------------------------------------
         settings = (
             getattr(detector, "_settings", {}) if hasattr(detector, "_settings") else {}
         )
         timeout_s = settings.get("conflict_llm_timeout_s", 10.0)
+        # -----------------------------------------------------------
 
+        # TODO [L3]: Construct conflict detection prompt - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Build structured prompt for LLM conflict analysis
+        # Business Rule: Include document titles, content excerpts (1000 chars), and similarity score
+        # Data Flow: (doc1, doc2, similarity_score) -> formatted prompt string
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         prompt = (
             "Analyze two documents for conflicts in information, recommendations, or approaches.\n"
             f"Doc1: {doc1.source_title}\nContent: {doc1.content[:1000]}...\n"
@@ -26,7 +66,15 @@ async def validate_conflict_with_llm(
             f"Vector Similarity: {similarity_score:.3f}\n"
             "Respond: CONFLICT_DETECTED|CONFIDENCE|EXPLANATION (concise)."
         )
+        # -----------------------------------------------------------
 
+        # TODO [L3]: Execute LLM call with timeout - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Call LLM for conflict validation with configurable timeout
+        # Business Rule: Support both core LLM provider and legacy AsyncOpenAI client
+        # Infrastructure: asyncio.wait_for wraps LLM call for timeout control
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         if provider is not None:
             chat_client = provider.chat()
             response = await asyncio.wait_for(
@@ -58,7 +106,17 @@ async def validate_conflict_with_llm(
             content = (
                 getattr(getattr(raw.choices[0], "message", {}), "content", "") or ""
             )
+        # -----------------------------------------------------------
 
+        # TODO [L3]: Parse LLM response for conflict detection - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Extract conflict_detected, confidence, and explanation from LLM response
+        # Business Rule: Response format is "CONFLICT_DETECTED|CONFIDENCE|EXPLANATION"
+        #   - conflict_token: truthy (yes/true/y/1) or falsy (no/false/n/0)
+        #   - confidence: float 0.0-1.0 (clamped)
+        #   - explanation: optional text description
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         content = (content or "").strip()
         parts = content.split("|", 2)
         if len(parts) < 2:
@@ -82,6 +140,7 @@ async def validate_conflict_with_llm(
 
         explanation = parts[2].strip() if len(parts) > 2 else ""
         return conflict_detected, explanation or "", confidence
+        # -----------------------------------------------------------
     except TimeoutError:
         detector.logger.warning("LLM conflict validation timed out")
         return False, "LLM validation timeout", 0.0
@@ -93,12 +152,33 @@ async def validate_conflict_with_llm(
 async def llm_analyze_conflicts(
     detector: Any, doc1: Any, doc2: Any, similarity_score: float
 ) -> dict | None:
+    """Perform detailed LLM conflict analysis with structured output.
+
+    Use Case: Deep analysis of document conflicts with JSON response parsing
+    Data Flow: (doc1, doc2, similarity_score) -> LLM with system prompt -> parse JSON
+    Business Rule: Returns structured conflict data with type, confidence, explanation
+    Git: "Enhanced LLM conflict analysis" - Structured conflict responses
+    """
+    # TODO [L3]: Check LLM provider for detailed analysis - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Validate LLM provider availability for deep conflict analysis
+    # Business Rule: Return None if no provider available (graceful degradation)
+    # Test: test_llm_validation_tier
+    # -----------------------------------------------------------
     provider = getattr(getattr(detector, "engine", None), "llm_provider", None)
     openai_client = getattr(detector, "openai_client", None)
     if provider is None and openai_client is None:
         return None
+    # -----------------------------------------------------------
 
     try:
+        # TODO [L3]: Execute detailed LLM conflict analysis - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Call LLM with system prompt for structured conflict analysis
+        # Business Rule: Use "conflict detection assistant" system prompt for consistent responses
+        # Data Flow: (doc1.text, doc2.text) -> LLM -> JSON response with conflicts array
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         if provider is not None:
             chat_client = provider.chat()
             response = await chat_client.chat(
@@ -141,11 +221,19 @@ async def llm_analyze_conflicts(
             content = (
                 getattr(getattr(raw.choices[0], "message", {}), "content", "") or ""
             )
+        # -----------------------------------------------------------
 
         import json
 
         # 'content' computed above for either provider path
 
+        # TODO [L3]: Extract JSON from LLM response - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Parse JSON object from LLM response which may contain extra text
+        # Business Rule: Find first valid JSON object using balanced brace matching
+        # Data Flow: raw text -> find "{" ... "}" -> extract JSON substring
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         def extract_json_object(text: str, max_scan: int | None = None) -> str | None:
             if not text:
                 return None
@@ -207,6 +295,15 @@ async def llm_analyze_conflicts(
         if not isinstance(llm_result, dict):
             return None
 
+        # TODO [L3]: Process LLM conflict analysis result - AIKH-488/AIKH-603 (TC-CONFLICT-003)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Extract structured conflict data from parsed JSON response
+        # Business Rule: Normalize has_conflicts (bool/int/string) and extract:
+        #   - conflicts: list of conflict objects with type
+        #   - confidence: float 0.0-1.0 (default 0.5 if missing)
+        #   - explanation: string description of conflict
+        # Test: test_llm_validation_tier
+        # -----------------------------------------------------------
         raw_has_conflicts = llm_result.get("has_conflicts", False)
         if isinstance(raw_has_conflicts, bool):
             has_conflicts = raw_has_conflicts
@@ -254,6 +351,7 @@ async def llm_analyze_conflicts(
             "similarity_score": similarity_score,
             "type": conflict_type,
         }
+        # -----------------------------------------------------------
     except Exception as e:  # pragma: no cover
         detector.logger.warning("LLM conflict analysis failed", error=str(e))
         return None

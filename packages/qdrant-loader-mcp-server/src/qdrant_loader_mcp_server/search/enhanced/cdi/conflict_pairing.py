@@ -1,12 +1,14 @@
 # ============================================================
-# LEARNING: conflict_pairing.py
+# LEARNING: conflict_pairing.py - AIKH-488 (SPIKE-008: Validate detect_document_conflicts)
 # This file has been annotated with TODO markers for learning.
 # To restore: git checkout -- packages/qdrant-loader-mcp-server/src/qdrant_loader_mcp_server/search/enhanced/cdi/conflict_pairing.py
+# MCP Tool: detect_document_conflicts
 # Learning Objectives:
-# - [ ] Understand async embedding retrieval from Qdrant
-# - [ ] Understand cosine similarity calculation for vectors
-# - [ ] Understand document pair filtering by similarity
-# - [ ] Understand tiered analysis pair generation
+# - [ ] L2: Understand async embedding retrieval from Qdrant (AIKH-488/AIKH-602: TC-CONFLICT-002)
+# - [ ] L2: Understand cosine similarity calculation for vectors (AIKH-488/AIKH-602: TC-CONFLICT-002)
+# - [ ] L2: Understand document pair filtering by similarity (AIKH-488/AIKH-607: TC-CONFLICT-007)
+# - [ ] L2: Understand tiered analysis pair generation (AIKH-488/AIKH-607: TC-CONFLICT-007)
+# - [ ] LN: Understand async concurrency with semaphores (AIKH-488/AIKH-610: TC-CONFLICT-010)
 # ============================================================
 
 from __future__ import annotations
@@ -30,8 +32,11 @@ async def get_document_embeddings(
     Data Flow: document_ids -> Qdrant scroll API -> embeddings dict
     Git: "Async Embedding Retrieval" - Concurrent fetch with semaphore
     """
-    # TODO [L2]: Check Qdrant client availability
-    # Business Rule: Return empty dict if no client configured
+    # TODO [L2]: Check Qdrant client availability - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Validate Qdrant client is configured before fetching embeddings
+    # Business Rule: Return empty dict if no qdrant_client attribute (graceful degradation)
+    # Test: test_embedding_similarity_tier
     # -----------------------------------------------------------
     if not getattr(detector, "qdrant_client", None):
         return {}
@@ -64,10 +69,15 @@ async def get_document_embeddings(
     try:
         embeddings: dict[str, list[float]] = {}
 
-        # TODO [L2]: Configure timeout and concurrency from settings
-        # Use Case: Allow per-call customization of embedding retrieval
-        # Business Rule: Default 5s timeout, max 5 concurrent requests
+        # TODO [LN]: Configure timeout and concurrency from settings - AIKH-488/AIKH-610 (TC-CONFLICT-010)
+        # MCP Tool: detect_document_conflicts
+        # Use Case: Allow per-call customization of embedding retrieval for performance tuning
+        # Business Rule: Configurable settings with sensible defaults:
+        #   - conflict_embeddings_timeout_s: 5.0 seconds per request
+        #   - conflict_embeddings_max_concurrency: 5 concurrent requests max
+        # Infrastructure: asyncio.Semaphore controls concurrent Qdrant requests
         # Git: "Improved conflict detection with temporary settings context manager" (commit 8aade99)
+        # Test: test_performance_under_10_seconds
         # -----------------------------------------------------------
         settings = (
             getattr(detector, "_settings", {}) if hasattr(detector, "_settings") else {}
@@ -79,9 +89,12 @@ async def get_document_embeddings(
         # -----------------------------------------------------------
 
         async def fetch_embedding(doc_id: str) -> None:
-            # TODO [L2]: Implement semaphore-controlled embedding fetch
-            # Use Case: Rate-limit concurrent Qdrant requests
-            # Data Flow: doc_id -> Qdrant scroll -> filter by document_id -> extract vector
+            # TODO [L2]: Implement semaphore-controlled embedding fetch - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+            # MCP Tool: detect_document_conflicts
+            # Use Case: Fetch single document embedding with rate limiting
+            # Data Flow: doc_id -> Qdrant scroll API (with filter) -> extract vector from point
+            # Business Rule: Rate-limit via semaphore to avoid overwhelming Qdrant
+            # Test: test_embedding_similarity_tier
             # -----------------------------------------------------------
             async with semaphore:
                 try:
@@ -134,9 +147,12 @@ async def get_document_embeddings(
                     )
             # -----------------------------------------------------------
 
-        # TODO [L2]: Concurrent embedding retrieval
+        # TODO [L2]: Concurrent embedding retrieval - AIKH-488/AIKH-610 (TC-CONFLICT-010)
+        # MCP Tool: detect_document_conflicts
         # Use Case: Fetch all embeddings in parallel for performance
+        # Infrastructure: asyncio.gather with return_exceptions=True for fault tolerance
         # Git: "Performance optimizations" - asyncio.gather for parallel I/O
+        # Test: test_performance_under_10_seconds
         # -----------------------------------------------------------
         await asyncio.gather(
             *(fetch_embedding(doc_id) for doc_id in document_ids),
@@ -157,9 +173,12 @@ def calculate_vector_similarity(
     Use Case: Measure semantic similarity between document embeddings
     Business Rule: cosine_similarity = dot(a,b) / (norm(a) * norm(b))
     """
-    # TODO [L2]: Implement cosine similarity calculation
+    # TODO [L2]: Implement cosine similarity calculation - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+    # MCP Tool: detect_document_conflicts
     # Data Flow: embedding1, embedding2 -> numpy arrays -> dot product / norms
-    # Business Rule: Return 0.0 if any vector has zero norm
+    # Business Rule: Return 0.0 if any vector has zero norm (prevents division by zero)
+    # Formula: cosine_similarity = dot(a,b) / (norm(a) * norm(b)), clipped to [-1, 1]
+    # Test: test_embedding_similarity_tier
     # -----------------------------------------------------------
     try:
         vec1 = np.array(embedding1)
@@ -188,15 +207,20 @@ async def filter_by_vector_similarity(
     """
     similar_pairs: list[tuple] = []
 
-    # TODO [L2]: Validate minimum document count
-    # Business Rule: Need at least 2 documents to form pairs
+    # TODO [L2]: Validate minimum document count - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Business Rule: Need at least 2 documents to form pairs for comparison
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     if len(documents) < 2:
         return similar_pairs
     # -----------------------------------------------------------
 
-    # TODO [L2]: Build document ID list and fetch embeddings
+    # TODO [L2]: Build document ID list and fetch embeddings - AIKH-488/AIKH-602 (TC-CONFLICT-002)
+    # MCP Tool: detect_document_conflicts
     # Data Flow: documents -> extract document_id or generate from source_type:source_title
+    # Business Rule: Fallback ID generation ensures all documents can be compared
+    # Test: test_embedding_similarity_tier
     # -----------------------------------------------------------
     document_ids = [
         getattr(doc, "document_id", f"{doc.source_type}:{doc.source_title}")
@@ -205,10 +229,13 @@ async def filter_by_vector_similarity(
     embeddings = await get_document_embeddings(detector, document_ids)
     # -----------------------------------------------------------
 
-    # TODO [L2]: Generate pairs with similarity scores
-    # Use Case: Create all possible pairs with their similarity scores
-    # Business Rule: Only include pairs with similarity <= MAX_VECTOR_SIMILARITY
+    # TODO [L2]: Generate pairs with similarity scores - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Create all possible document pairs with their cosine similarity scores
+    # Business Rule: Only include pairs with similarity <= MAX_VECTOR_SIMILARITY (0.98)
     #               (pairs > threshold are likely duplicates, not conflicts)
+    # Data Flow: O(n²) pair generation with embedding lookup and similarity calculation
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     for i, doc1 in enumerate(documents):
         for j, doc2 in enumerate(documents[i + 1 :], i + 1):
@@ -225,8 +252,11 @@ async def filter_by_vector_similarity(
                 similar_pairs.append((doc1, doc2, similarity_score))
     # -----------------------------------------------------------
 
-    # TODO [L2]: Sort pairs by similarity (highest first)
+    # TODO [L2]: Sort pairs by similarity (highest first) - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
     # Use Case: Process most similar (more likely conflicting) pairs first
+    # Business Rule: Descending sort ensures high-priority conflicts analyzed first
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     similar_pairs.sort(key=lambda x: x[2], reverse=True)
     # -----------------------------------------------------------
@@ -241,12 +271,15 @@ def should_analyze_for_conflicts(_detector: Any, doc1: Any, doc2: Any) -> bool:
     Git: "Edge Case Handling" - Empty document handling
     Test: test_should_analyze_for_conflicts_edge_cases
     """
-    # TODO [L2]: Implement document eligibility checks
-    # Business Rule:
+    # TODO [L2]: Implement document eligibility checks - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Business Rule: Pre-screen documents before expensive conflict analysis
     #   - Return False if either doc is None
-    #   - Return False if text < 10 characters
-    #   - Return False if same document_id
-    #   - Return False if identical text content
+    #   - Return False if text < 10 characters (too short to analyze)
+    #   - Return False if same document_id (self-comparison)
+    #   - Return False if identical text content (duplicates, not conflicts)
+    # Git: "Edge Case Handling" - Empty document handling
+    # Test: test_should_analyze_for_conflicts_edge_cases
     # -----------------------------------------------------------
     if not doc1 or not doc2:
         return False
@@ -275,14 +308,24 @@ async def get_tiered_analysis_pairs(detector: Any, documents: list[Any]) -> list
     """
     pairs: list[tuple] = []
 
-    # TODO [L2]: Validate minimum document count
+    # TODO [L2]: Validate minimum document count - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Business Rule: Need at least 2 documents to form pairs
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     if len(documents) < 2:
         return pairs
     # -----------------------------------------------------------
 
-    # TODO [L2]: Generate pairs with tier classification
+    # TODO [L2]: Generate pairs with tier classification - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
     # Data Flow: documents -> pairs with (doc1, doc2, tier, score)
+    # Business Rule: Tiers based on average document relevance score:
+    #   - primary: score >= 0.8 (high relevance, analyze first)
+    #   - secondary: score >= 0.5 (moderate relevance)
+    #   - tertiary: score < 0.5 (low relevance, analyze last)
+    # Git: "Enhanced conflict detection - tiered analysis" (commit 58a9666)
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     for i, doc1 in enumerate(documents):
         for _j, doc2 in enumerate(documents[i + 1 :], i + 1):
@@ -301,8 +344,11 @@ async def get_tiered_analysis_pairs(detector: Any, documents: list[Any]) -> list
             pairs.append((doc1, doc2, tier, score))
     # -----------------------------------------------------------
 
-    # TODO [L2]: Sort by score descending
-    # Use Case: Process highest-relevance pairs first
+    # TODO [L2]: Sort by score descending - AIKH-488/AIKH-607 (TC-CONFLICT-007)
+    # MCP Tool: detect_document_conflicts
+    # Use Case: Process highest-relevance pairs first for optimal conflict detection
+    # Business Rule: Descending sort by score ensures most relevant conflicts found first
+    # Test: test_tiered_filtering
     # -----------------------------------------------------------
     pairs.sort(key=lambda x: x[3], reverse=True)
     # -----------------------------------------------------------
