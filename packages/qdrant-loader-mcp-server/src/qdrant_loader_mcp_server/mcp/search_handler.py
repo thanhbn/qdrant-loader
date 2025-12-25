@@ -54,11 +54,25 @@ class SearchHandler:
                 },
             )
 
+        # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002]: Extract limit parameter
+        # Use Case: UC-002 - Search with Limit Parameter
+        # Business Rule: limit defaults to 10, must be positive integer
+        # Data Flow: MCP params -> limit -> SearchEngine.search()
+        # Test: test_handle_tools_call, test_search_with_limit_parameter
+        # Git: Search parameter handling (see commits for SPIKE-001)
+        # -----------------------------------------------------------
         # Extract parameters with defaults
         query = params["query"]
         source_types = params.get("source_types", [])
+        # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-006]: Extract project_ids filter
+        # Use Case: UC-004 - Search with Project Filter
+        # Business Rule: project_ids filters results to specific projects only
+        # Data Flow: MCP params -> project_ids -> Qdrant filter
+        # Test: test_search_with_project_filter
+        # -----------------------------------------------------------
         project_ids = params.get("project_ids", [])
         limit = params.get("limit", 10)
+        # -----------------------------------------------------------
 
         logger.info(
             "Processing search request",
@@ -76,7 +90,13 @@ class SearchHandler:
                 "Query processed successfully", processed_query=processed_query
             )
 
-            # Perform the search
+            # TODO [L2][AIKH-481][AIKH-554][TC-SEARCH-010]: Perform the search
+            # Use Case: UC-009 - Response Time < 500ms
+            # Business Rule: Search must complete within 500ms for good UX
+            # Performance: Embedding generation + Qdrant query (see profiling data)
+            # Data Flow: processed_query -> SearchEngine.search() -> HybridSearchEngine
+            # Test: test_search_response_time
+            # -----------------------------------------------------------
             logger.debug("Executing search in Qdrant")
             results = await self.search_engine.search(
                 query=processed_query["query"],
@@ -84,6 +104,7 @@ class SearchHandler:
                 project_ids=project_ids,
                 limit=limit,
             )
+            # -----------------------------------------------------------
             logger.info(
                 "Search completed successfully",
                 result_count=len(results),

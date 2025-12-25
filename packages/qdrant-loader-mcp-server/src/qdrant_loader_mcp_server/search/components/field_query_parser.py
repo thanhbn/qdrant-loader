@@ -29,6 +29,13 @@ class ParsedQuery:
     original_query: str
 
 
+# TODO [L3][AIKH-481][AIKH-553][TC-SEARCH-006]: Field query parser infrastructure
+# Use Case: UC-004 - Search with Project Filter, exact field matching
+# Business Rule: Parses field:value syntax (e.g., document_id:abc123) into Qdrant filters
+# Supported Fields: document_id, source_type, source, project_id, title, url, file_path, etc.
+# Data Flow: query_string -> regex parse -> FieldQuery list -> Qdrant Filter
+# Architecture: Infrastructure layer for filter construction
+# -----------------------------------------------------------
 class FieldQueryParser:
     """Parses field-specific query syntax and converts to Qdrant filters."""
 
@@ -78,6 +85,12 @@ class FieldQueryParser:
             )
         return raw_value
 
+    # TODO [L3][AIKH-481][AIKH-553]: Query parsing with regex field extraction
+    # Use Case: UC-004 - Search with Project Filter
+    # Business Rule: Extracts field:value patterns, separates from text query
+    # Pattern: FIELD_PATTERN = r'(\w+):(?:"([^"]+)"|([^\s]+))'
+    # Data Flow: query -> regex finditer -> FieldQuery list + remaining text_query
+    # -----------------------------------------------------------
     def parse_query(self, query: str) -> ParsedQuery:
         """Parse a query string into field queries and text search.
 
@@ -138,6 +151,13 @@ class FieldQueryParser:
         )
         return parsed
 
+    # TODO [L3][AIKH-481][AIKH-553][TC-SEARCH-006]: Qdrant filter construction
+    # Use Case: UC-004 - Search with Project Filter
+    # Business Rule: Converts FieldQuery list to Qdrant Filter with must/should conditions
+    # Project Filter: Supports top-level project_id, source, and metadata.project_id (OR semantics)
+    # Architecture: Uses dot notation for nested metadata fields (not NestedCondition)
+    # Data Flow: FieldQuery list + project_ids -> models.Filter(must=[], should=[])
+    # -----------------------------------------------------------
     def create_qdrant_filter(
         self,
         field_queries: list[FieldQuery] | None,

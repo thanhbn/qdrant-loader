@@ -11,6 +11,15 @@ from ..pipeline import HybridPipeline
 logger = logging.getLogger(__name__)
 
 
+# TODO [L1][AIKH-481][AIKH-553][AIKH-554][TC-SEARCH-002][TC-SEARCH-010]: Main search orchestration
+# Use Case: UC-001 - Basic Semantic Search, UC-009 - Response Time < 500ms
+# Business Rule: Orchestrates intent classification -> query expansion -> vector+keyword search -> result combination
+# Performance: CRITICAL - total pipeline ~200-400ms target, coordinates all search stages
+# Architecture: Central orchestration - coordinates HybridPipeline or direct vector+keyword searches
+# Data Flow: query -> intent_classify -> adapt_strategy -> expand_query -> parallel(vector, keyword) -> combine
+# State Management: Creates request-scoped combiner clone to avoid mutating shared engine state
+# Test: test_run_search, test_intent_adaptation, test_pipeline_orchestration
+# -----------------------------------------------------------
 async def run_search(
     engine: Any,
     query: str,
@@ -38,6 +47,12 @@ async def run_search(
             spacy_analyzer=getattr(base_combiner, "spacy_analyzer", None),
         )
 
+        # TODO [L2][AIKH-481][AIKH-553]: Intent classification and adaptive strategy
+        # Use Case: UC-001 - Basic Semantic Search (intent-aware ranking)
+        # Business Rule: Classifies query intent (navigational, informational, exploratory) to adjust weights
+        # Data Flow: query + session_context -> IntentClassifier -> AdaptiveStrategy -> weight adjustments
+        # Adaptation: modifies vector_weight, keyword_weight, min_score, limit based on intent
+        # -----------------------------------------------------------
         # Intent classification and adaptive adjustments (applied to local combiner only)
         search_intent = None
         adaptive_config = None
@@ -54,6 +69,12 @@ async def run_search(
                 local_combiner.min_score = adaptive_config.min_score_threshold
                 limit = min(adaptive_config.max_results, limit * 2)
 
+        # TODO [L2][AIKH-481][AIKH-553]: Query expansion for improved recall
+        # Use Case: UC-001 - Basic Semantic Search (semantic enrichment)
+        # Business Rule: Expands query with synonyms, related terms using spaCy NLP
+        # Data Flow: query -> spaCy analyzer -> semantic_keywords + concepts -> expanded_query
+        # Aggressiveness: Higher values add more terms (for exploratory searches)
+        # -----------------------------------------------------------
         expanded_query = await engine._expand_query(query)
         if adaptive_config and getattr(adaptive_config, "expand_query", False):
             aggressiveness = getattr(adaptive_config, "expansion_aggressiveness", None)
@@ -79,6 +100,12 @@ async def run_search(
             # Use the stricter (higher) engine threshold
             local_combiner.min_score = engine_min_score
 
+        # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: Pipeline execution branch
+        # Use Case: UC-009 - Response Time < 500ms
+        # Business Rule: Pipeline mode enables reranking, normalization, deduplication
+        # Performance: Pipeline adds ~20-50ms overhead but improves result quality
+        # Architecture: HybridPipeline wraps vector+keyword search with post-processing
+        # -----------------------------------------------------------
         if plan.use_pipeline and engine.hybrid_pipeline is not None:
             p = engine.hybrid_pipeline
             if isinstance(p, HybridPipeline):
@@ -115,6 +142,13 @@ async def run_search(
                     keyword_query=query,
                 )
         else:
+            # TODO [L1][AIKH-481][AIKH-553][AIKH-554][TC-SEARCH-002][TC-SEARCH-006]: Direct search branch
+            # Use Case: UC-001 - Basic Semantic Search, UC-004 - Search with Project Filter
+            # Business Rule: Parallel vector + keyword search when pipeline not available
+            # Performance: ~150-300ms (embedding ~100-200ms + Qdrant ~50-100ms)
+            # Data Flow: expanded_query -> vector_search, query -> keyword_search -> combine
+            # Over-fetch: limit*3 to ensure quality after score-based filtering
+            # -----------------------------------------------------------
             vector_results = await engine._vector_search(
                 expanded_query, limit * 3, project_ids
             )

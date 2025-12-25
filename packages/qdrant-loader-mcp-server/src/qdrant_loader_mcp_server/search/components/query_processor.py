@@ -41,6 +41,14 @@ class QueryProcessor:
             "link": ["reference", "url", "external", "connection"],
         }
 
+    # TODO [L2][AIKH-481][AIKH-553]: Query expansion with spaCy NLP
+    # Use Case: UC-001 - Basic Semantic Search (recall improvement)
+    # Business Rule: Adds semantic keywords and main concepts from NLP analysis
+    # Performance: spaCy analysis ~5-20ms, expansion adds ~3 terms
+    # Data Flow: query -> spaCy.analyze_query_semantic -> semantic_keywords + main_concepts -> expanded
+    # Fallback: Uses regex-based expansion if spaCy fails
+    # Test: test_query_expansion, test_spacy_semantic_keywords
+    # -----------------------------------------------------------
     async def expand_query(self, query: str) -> str:
         """Expand query with spaCy semantic understanding and related terms.
 
@@ -82,6 +90,13 @@ class QueryProcessor:
             self.logger.warning(f"spaCy expansion failed, using fallback: {e}")
             return self._expand_query_fallback(query)
 
+    # TODO [L2][AIKH-481][AIKH-553]: Aggressive query expansion for exploration
+    # Use Case: UC-001 - Basic Semantic Search (exploratory mode)
+    # Business Rule: Adds more terms (5 keywords, 4 concepts, 3 entities) for broader recall
+    # Trigger: When adaptive_config.expansion_aggressiveness > 0.5
+    # Performance: Same as expand_query but with more output terms
+    # Data Flow: query -> spaCy -> semantic_keywords[:5] + concepts[:4] + entities[:3]
+    # -----------------------------------------------------------
     async def expand_query_aggressive(self, query: str) -> str:
         """More aggressive query expansion for exploratory searches.
 
@@ -125,6 +140,15 @@ class QueryProcessor:
             self.logger.warning(f"Aggressive expansion failed, using standard: {e}")
             return await self.expand_query(query)
 
+    # TODO [L2][AIKH-481][AIKH-553]: Query analysis with spaCy NLP
+    # Use Case: UC-001 - Basic Semantic Search (intent detection, entity extraction)
+    # Business Rule: Extracts intent, entities, keywords, complexity for adaptive search
+    # Output: is_question, is_technical, probable_intent, keywords, entities, complexity_score
+    # Data Flow: query -> spaCy.analyze_query_semantic -> query_context dict
+    # Intent Types: informational, procedural, requirements, architecture
+    # Performance: spaCy processing ~10-30ms
+    # Test: test_query_analysis, test_intent_detection
+    # -----------------------------------------------------------
     def analyze_query(self, query: str) -> dict[str, Any]:
         """Analyze query using spaCy NLP for comprehensive understanding.
 

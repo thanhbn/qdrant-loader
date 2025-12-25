@@ -23,6 +23,12 @@ class SearchOperations:
         """Initialize with search engine reference."""
         self.engine = engine
 
+    # TODO [L2][AIKH-481][AIKH-553][TC-SEARCH-002]: Core search operation
+    # Use Case: UC-001 - Basic Semantic Search
+    # Business Rule: Delegates to HybridSearchEngine with limit constraint
+    # Data Flow: SearchHandler -> SearchOperations -> HybridSearchEngine
+    # Test: test_search_operations
+    # -----------------------------------------------------------
     async def search(
         self,
         query: str,
@@ -51,12 +57,18 @@ class SearchOperations:
         )
 
         try:
+            # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002][TC-SEARCH-006]: Pass filters to hybrid search
+            # Use Case: UC-002, UC-004 - Limit and Project Filters
+            # Business Rule: limit controls result count, project_ids restricts scope
+            # Data Flow: SearchOps -> hybrid.search(limit, project_ids)
+            # -----------------------------------------------------------
             results = await hybrid.search(
                 query=query,
                 source_types=source_types,
                 limit=limit,
                 project_ids=project_ids,
             )
+            # -----------------------------------------------------------
 
             logger.info(
                 "Search completed",
@@ -69,3 +81,4 @@ class SearchOperations:
         except Exception as e:
             logger.error("Search failed", error=str(e), query=query)
             raise
+    # -----------------------------------------------------------

@@ -32,6 +32,15 @@ else:
 logger = LoggingConfig.get_logger(__name__)
 
 
+# TODO [L2][AIKH-481][AIKH-553]: Intent classification engine
+# Use Case: UC-001 - Basic Semantic Search (intent-aware ranking)
+# Business Rule: Classifies query into 8 intent types for adaptive search behavior
+# Intent Types: TECHNICAL_LOOKUP, BUSINESS_CONTEXT, VENDOR_EVALUATION, PROCEDURAL,
+#               INFORMATIONAL, TROUBLESHOOTING, EXPLORATORY, GENERAL (fallback)
+# Algorithm: Weighted scoring (keywords 40%, POS 25%, entities 20%, questions 10%, linguistic 5%)
+# Data Flow: query -> spaCy analysis -> pattern matching -> behavioral weighting -> SearchIntent
+# Performance: ~10-50ms including spaCy analysis, cached for repeated queries
+# -----------------------------------------------------------
 class IntentClassifier:
     """Advanced intent classification using spaCy analysis and behavioral patterns."""
 
@@ -356,6 +365,14 @@ class IntentClassifier:
 
         logger.info("Initialized intent classifier with spaCy integration")
 
+    # TODO [L2][AIKH-481][AIKH-553]: Main intent classification method
+    # Use Case: UC-001 - Basic Semantic Search (entry point for intent-aware search)
+    # Business Rule: 8-step classification pipeline with caching
+    # Steps: 1) cache check, 2) spaCy analysis, 3) linguistic features, 4) pattern scoring,
+    #        5) behavioral weighting, 6) session context, 7) intent selection, 8) evidence building
+    # Output: SearchIntent with primary/secondary intents, confidence, linguistic features
+    # Performance: ~10-50ms, cached results return in ~1ms
+    # -----------------------------------------------------------
     def classify_intent(
         self,
         query: str,

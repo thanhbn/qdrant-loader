@@ -31,6 +31,14 @@ class KeywordSearchService:
         self.field_parser = FieldQueryParser()
         self.logger = LoggingConfig.get_logger(__name__)
 
+    # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002]: Keyword search with BM25
+    # Use Case: UC-001 - Basic Semantic Search (keyword component)
+    # Business Rule: BM25 scoring for lexical matching, complements vector search
+    # Performance: Pagination through Qdrant scroll + BM25 computation
+    # Data Flow: query -> Qdrant scroll -> BM25 ranking -> top results
+    # Architecture: Hybrid search combines this with vector search
+    # Test: test_keyword_search, test_bm25_ranking
+    # -----------------------------------------------------------
     async def keyword_search(
         self,
         query: str,
@@ -182,6 +190,14 @@ class KeywordSearchService:
             return []
         return re.findall(r"\b\w+\b", text.lower())
 
+    # TODO [L2][AIKH-481][AIKH-553]: BM25 score computation
+    # Use Case: UC-001 - Basic Semantic Search (ranking component)
+    # Business Rule: BM25Okapi algorithm for term frequency scoring
+    # Performance: O(n*m) where n=docs, m=terms - runs in thread pool
+    # Algorithm: TF-IDF variant with document length normalization
+    # Data Flow: documents + query -> tokenization -> BM25Okapi -> scores
+    # Test: test_bm25_computation
+    # -----------------------------------------------------------
     def _compute_bm25_scores(self, documents: list[str], query: str) -> np.ndarray:
         """Compute BM25 scores for documents against the query.
 
@@ -191,3 +207,4 @@ class KeywordSearchService:
         bm25 = BM25Okapi(tokenized_docs)
         tokenized_query = self._tokenize(query)
         return bm25.get_scores(tokenized_query)
+    # -----------------------------------------------------------

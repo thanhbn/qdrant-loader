@@ -118,6 +118,14 @@ class VectorSearchService:
             for key, _ in sorted_items[:items_to_remove]:
                 del self._search_cache[key]
 
+    # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: Embedding generation
+    # Use Case: UC-009 - Response Time < 500ms (PERFORMANCE CRITICAL)
+    # Business Rule: Embedding must be generated for semantic search
+    # Performance: OpenAI API call ~100-200ms - MAJOR BOTTLENECK
+    # Optimization: Consider embedding caching, batch processing
+    # Data Flow: query text -> OpenAI/Provider -> embedding vector
+    # Test: test_embedding_generation, test_vector_search_performance
+    # -----------------------------------------------------------
     async def get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI client when available, else provider.
 
@@ -161,6 +169,14 @@ class VectorSearchService:
         # Nothing configured
         raise RuntimeError("No embeddings provider or OpenAI client configured")
 
+    # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: Vector search main method
+    # Use Case: UC-009 - Response Time < 500ms, UC-001 - Basic Semantic Search
+    # Business Rule: Vector search using embeddings for semantic matching
+    # Performance: Qdrant query ~50-100ms, caching can reduce to ~1ms
+    # Data Flow: query -> embedding -> Qdrant query_points -> results
+    # Architecture: Supports field queries (document_id:xxx) and vector search
+    # Test: test_vector_search, test_search_with_project_filter
+    # -----------------------------------------------------------
     async def vector_search(
         self, query: str, limit: int, project_ids: list[str] | None = None
     ) -> list[dict[str, Any]]:
@@ -246,11 +262,25 @@ class VectorSearchService:
                 hnsw_ef=self.hnsw_ef, exact=bool(self.use_exact_search)
             )
 
+            # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-006]: Qdrant filter construction
+            # Use Case: UC-004 - Search with Project Filter
+            # Business Rule: project_ids restricts results to specific projects
+            # Data Flow: field_queries + project_ids -> Qdrant Filter
+            # Test: test_search_with_project_filter
+            # -----------------------------------------------------------
             # Combine field filters with project filters
             query_filter = self.field_parser.create_qdrant_filter(
                 parsed_query.field_queries, project_ids
             )
+            # -----------------------------------------------------------
 
+            # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: Qdrant query execution
+            # Use Case: UC-009 - Response Time < 500ms
+            # Performance: Qdrant query_points ~50-100ms
+            # Architecture: Uses HNSW index for approximate nearest neighbor
+            # Data Flow: embedding + filter -> Qdrant -> scored results
+            # Test: test_qdrant_query_performance
+            # -----------------------------------------------------------
             # Use query_points API (qdrant-client 1.10+)
             query_response = await self.qdrant_client.query_points(
                 collection_name=self.collection_name,

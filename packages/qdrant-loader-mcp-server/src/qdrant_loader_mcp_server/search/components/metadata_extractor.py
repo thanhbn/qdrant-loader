@@ -17,6 +17,14 @@ from .search_result_models import (
 )
 
 
+# TODO [L3][AIKH-481][AIKH-553]: Metadata extraction infrastructure
+# Use Case: UC-001 - Basic Semantic Search (result enrichment)
+# Business Rule: Extracts structured metadata from Qdrant payloads for display
+# Components: ProjectInfo, HierarchyInfo, AttachmentInfo, SectionInfo, ContentAnalysis,
+#             SemanticAnalysis, NavigationContext, ChunkingContext, ConversionInfo, CrossReferenceInfo
+# Data Flow: metadata dict -> extract_* methods -> typed dataclass objects
+# Architecture: Infrastructure layer for metadata parsing and normalization
+# -----------------------------------------------------------
 class MetadataExtractor:
     """Extracts and processes metadata from search results."""
 
@@ -314,6 +322,13 @@ class MetadataExtractor:
             content_type_context=content_type_context,
         )
 
+    # TODO [L3][AIKH-481][AIKH-553]: Aggregate metadata extraction
+    # Use Case: UC-001 - Basic Semantic Search (result enrichment)
+    # Business Rule: Calls all extract_* methods to build complete metadata picture
+    # Output: Dict with keys: project, hierarchy, attachment, section, content, semantic,
+    #         navigation, chunking, conversion, cross_reference
+    # Data Flow: metadata -> all extractors -> aggregated dict
+    # -----------------------------------------------------------
     def extract_all_metadata(self, metadata: dict) -> dict[str, Any]:
         """Extract all metadata components from document metadata.
 

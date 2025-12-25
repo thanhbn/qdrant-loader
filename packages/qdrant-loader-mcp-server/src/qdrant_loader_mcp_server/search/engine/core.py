@@ -209,6 +209,12 @@ class SearchEngine:
             finally:
                 self.client = None
 
+    # TODO [L2][AIKH-481][AIKH-553]: Core SearchEngine.search() delegation
+    # Use Case: UC-001 - Basic Semantic Search (Entry Point)
+    # Architecture: Facade pattern - delegates to SearchOperations or HybridSearchEngine
+    # Data Flow: MCP Handler -> SearchEngine -> SearchOps -> HybridSearchEngine
+    # Test: test_search_engine_delegation
+    # -----------------------------------------------------------
     # Delegate operations to specialized modules
     async def search(
         self,
@@ -218,6 +224,10 @@ class SearchEngine:
         project_ids: list[str] | None = None,
     ) -> list[HybridSearchResult]:
         """Search for documents using hybrid search."""
+        # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002][TC-SEARCH-006]: Delegate with filters
+        # Business Rule: Pass limit and project_ids to underlying engine
+        # Edge Case: If _search_ops not initialized, fallback to direct hybrid_search
+        # -----------------------------------------------------------
         if not self._search_ops:
             # Fallback: delegate directly to hybrid_search when operations not initialized
             if not self.hybrid_search:
@@ -229,6 +239,7 @@ class SearchEngine:
                 project_ids=project_ids,
             )
         return await self._search_ops.search(query, source_types, limit, project_ids)
+    # -----------------------------------------------------------
 
     async def generate_topic_chain(
         self,

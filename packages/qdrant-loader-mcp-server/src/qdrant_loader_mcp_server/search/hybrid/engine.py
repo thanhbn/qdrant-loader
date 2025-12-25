@@ -111,6 +111,14 @@ class HybridSearchEngine(HybridEngineAPI):
         except Exception:
             pass
 
+    # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: HybridSearchEngine entry point
+    # Use Case: UC-009 - Response Time < 500ms (FINAL EXECUTION LAYER)
+    # Architecture: Concrete implementation wrapping HybridEngineAPI
+    # Performance: Error handling overhead ~1ms (negligible)
+    # Data Flow: HybridEngineAPI.search() -> super().search() -> run_search()
+    # Error Handling: Logs and re-raises exceptions for caller to handle
+    # Test: test_hybrid_search_engine, test_search_error_handling
+    # -----------------------------------------------------------
     async def search(self, *args, **kwargs):  # type: ignore[override]
         try:
             return await super().search(*args, **kwargs)
@@ -119,5 +127,6 @@ class HybridSearchEngine(HybridEngineAPI):
                 "Error in hybrid search", error=str(e), query=kwargs.get("query")
             )
             raise
+    # -----------------------------------------------------------
 
     # All other public and internal methods are provided by HybridEngineAPI

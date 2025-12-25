@@ -49,6 +49,14 @@ class ResultCombiner:
             metadata_weight=self.metadata_weight,
         )
 
+    # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002]: Result combination and ranking
+    # Use Case: UC-001 - Basic Semantic Search (final ranking)
+    # Business Rule: Combines vector + keyword scores with configurable weights
+    # Formula: combined = vector_weight * v_score + keyword_weight * k_score + metadata_weight * m_score
+    # Performance: O(n) merge + O(n log n) sort - typically < 10ms
+    # Data Flow: vector_results + keyword_results -> merge -> score -> rank -> limit
+    # Test: test_result_combining, test_score_weighting
+    # -----------------------------------------------------------
     async def combine_results(
         self,
         vector_results: list[dict[str, Any]],
@@ -122,10 +130,20 @@ class ResultCombiner:
         adaptive_config = query_context.get("adaptive_config")
         result_filters = adaptive_config.result_filters if adaptive_config else {}
 
+        # TODO [L1][AIKH-481][AIKH-553][TC-SEARCH-002]: Score computation loop
+        # Use Case: UC-001 - Basic Semantic Search
+        # Business Rule: Filters by source_type, computes weighted scores
+        # Data Flow: combined_dict -> filter -> score -> boost -> result
+        # -----------------------------------------------------------
         for text, info in combined_dict.items():
+            # TODO [L2][AIKH-481][AIKH-553]: Source type filtering
+            # Use Case: UC-003 - Search with Source Type Filter
+            # Business Rule: source_types restricts results to specific types
+            # -----------------------------------------------------------
             # Skip if source type doesn't match filter
             if source_types and info["source_type"] not in source_types:
                 continue
+            # -----------------------------------------------------------
 
             metadata = info["metadata"]
 
@@ -134,6 +152,10 @@ class ResultCombiner:
                 if should_skip_result(metadata, result_filters, query_context):
                     continue
 
+            # TODO [L1][AIKH-481][AIKH-553]: Weighted score calculation
+            # Business Rule: HybridScorer applies vector/keyword/metadata weights
+            # Formula: weighted_sum = v_w * v + k_w * k + m_w * m
+            # -----------------------------------------------------------
             combined_score = self._scorer.compute(
                 ScoreComponents(
                     vector_score=info["vector_score"],

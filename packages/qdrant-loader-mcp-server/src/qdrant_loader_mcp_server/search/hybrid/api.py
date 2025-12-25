@@ -68,6 +68,17 @@ class HybridEngineAPI:
         self._planner = None
         self._orchestrator = None
 
+    # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-010]: HybridEngineAPI.search()
+    # Use Case: UC-009 - Response Time < 500ms (PERFORMANCE CRITICAL)
+    # Business Rule: Total search time must be < 500ms for good UX
+    # Performance Bottlenecks:
+    #   1. Embedding generation (OpenAI API call) - ~100-200ms
+    #   2. Qdrant vector search - ~50-100ms
+    #   3. Result combining and formatting - ~20-50ms
+    # Optimization: Consider embedding caching, async parallelization
+    # Data Flow: SearchEngine -> HybridEngineAPI.search() -> run_search()
+    # Test: test_search_response_time, test_search_performance_sla
+    # -----------------------------------------------------------
     async def search(
         self,
         query: str,
@@ -83,6 +94,10 @@ class HybridEngineAPI:
         self.logger.debug(
             f"Starting hybrid search query={query} limit={limit} source_types={source_types} project_ids={project_ids} intent_adaptation_enabled={self.enable_intent_adaptation}"
         )
+        # TODO [L1][AIKH-481][AIKH-554][TC-SEARCH-002]: Apply limit in run_search
+        # Business Rule: limit controls maximum results returned
+        # Data Flow: limit passed to run_search -> applied to Qdrant query
+        # -----------------------------------------------------------
         return await run_search(
             self,
             query=query,
@@ -92,6 +107,7 @@ class HybridEngineAPI:
             session_context=session_context,
             behavioral_context=behavioral_context,
         )
+    # -----------------------------------------------------------
 
     # Topic Search Chain
     async def generate_topic_search_chain(
