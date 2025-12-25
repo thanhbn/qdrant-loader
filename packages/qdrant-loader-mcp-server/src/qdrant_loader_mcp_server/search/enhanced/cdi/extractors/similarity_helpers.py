@@ -177,7 +177,28 @@ def get_shared_topics_count(doc1: SearchResult, doc2: SearchResult) -> int:
     return len(set(get_shared_topics(doc1, doc2)))
 
 
+# =============================================================================
+# TODO [L1] AIKH-485/AIKH-569: INTER-PROJECT DETECTION HELPERS
+# =============================================================================
+# These functions implement the ACTUAL LOGIC for detecting inter-project
+# complementary relationships. Called from finders.py._score_inter_project_complementary()
+#
+# SCORING IMPACT:
+# - has_transferable_domain_knowledge() → 0.75 score factor
+# - has_reusable_architecture_patterns() → 0.70 score factor
+# - has_shared_technologies() → 0.30 + (count * 0.10) score factor
+#
+# All scores get 0.8 PENALTY applied for inter-project (see finders.py line 245)
+# =============================================================================
+
+
 def has_transferable_domain_knowledge(doc1: SearchResult, doc2: SearchResult) -> bool:
+    """Check if both docs share same domain expertise (e.g., both healthcare).
+
+    # TODO [L1] AIKH-569: TC-COMPLEMENT-008 - Domain knowledge transfer detection
+    # Uses DOMAIN_KEYWORDS from utils.py to match domain groups
+    # Example: "Patient Portal" + "Clinical API" → both in healthcare group → True
+    """
     title1 = (doc1.source_title or "").lower()
     title2 = (doc2.source_title or "").lower()
     for domain in DOMAIN_KEYWORDS:
@@ -187,6 +208,12 @@ def has_transferable_domain_knowledge(doc1: SearchResult, doc2: SearchResult) ->
 
 
 def has_reusable_architecture_patterns(doc1: SearchResult, doc2: SearchResult) -> bool:
+    """Check if both docs share same architecture pattern (e.g., both microservices).
+
+    # TODO [L1] AIKH-569: TC-COMPLEMENT-008 - Architecture pattern detection
+    # Uses ARCHITECTURE_PATTERNS from utils.py to match pattern groups
+    # Example: "API Gateway Design" + "REST Endpoints" → both in api group → True
+    """
     title1 = (doc1.source_title or "").lower()
     title2 = (doc2.source_title or "").lower()
     for pattern in ARCHITECTURE_PATTERNS:
@@ -196,6 +223,11 @@ def has_reusable_architecture_patterns(doc1: SearchResult, doc2: SearchResult) -
 
 
 def has_shared_technologies(doc1: SearchResult, doc2: SearchResult) -> bool:
+    """Check if both docs reference same technologies (e.g., both use React).
+
+    # TODO [L1] AIKH-569: TC-COMPLEMENT-008 - Shared technology detection
+    # Checks entities + title keywords against TECH_KEYWORDS_SHARED
+    """
     # Reuse the shared extraction logic for consistency across helpers
     ents1 = set(extract_texts_from_mixed(getattr(doc1, "entities", []) or []))
     ents2 = set(extract_texts_from_mixed(getattr(doc2, "entities", []) or []))

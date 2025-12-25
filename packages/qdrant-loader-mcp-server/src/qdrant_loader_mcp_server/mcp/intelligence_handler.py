@@ -1,4 +1,24 @@
-"""Cross-document intelligence operations handler for MCP server."""
+"""Cross-document intelligence operations handler for MCP server.
+
+# =============================================================================
+# TODO [L3] AIKH-485: SPIKE-005 - Presentation Layer Masking
+# =============================================================================
+# This file is the L3 (Presentation) layer - the MCP INTERFACE layer.
+# It handles MCP protocol requests and formats responses for AI clients.
+#
+# RESPONSIBILITY:
+# - Validate incoming MCP request parameters
+# - Delegate to SearchEngine (L2) for business logic
+# - Format responses for MCP protocol (content + structuredContent)
+#
+# Key Method: handle_find_complementary_content() (line ~379)
+# - Validates: target_query, context_query (required)
+# - Calls: search_engine.find_complementary_content()
+# - Returns: MCP response with text content and structured JSON
+#
+# Study Order: This is the entry point - study how requests flow into the system
+# =============================================================================
+"""
 
 from typing import Any
 
@@ -379,9 +399,40 @@ class IntelligenceHandler:
     async def handle_find_complementary_content(
         self, request_id: str | int | None, params: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle complementary content request."""
+        """Handle complementary content request.
+
+        # =====================================================================
+        # TODO [L3] AIKH-485/AIKH-562: MCP REQUEST HANDLER
+        # =====================================================================
+        # This is the MCP entry point for find_complementary_content tool.
+        #
+        # MCP TOOL SCHEMA (from find_complementary.py):
+        #   Required: target_query (str), context_query (str)
+        #   Optional: max_recommendations (int, default=5),
+        #             source_types (list[str]), project_ids (list[str])
+        #
+        # RESPONSE FORMAT:
+        #   {
+        #     "content": [{"type": "text", "text": "formatted human-readable"}],
+        #     "structuredContent": {
+        #       "complementary_recommendations": [...],
+        #       "target_document": {...},
+        #       "context_documents_analyzed": int
+        #     },
+        #     "isError": false
+        #   }
+        #
+        # ERROR CODES:
+        #   -32602: Invalid params (missing required fields)
+        #   -32603: Internal server error
+        #
+        # EXERCISE: Why do we have both "content" and "structuredContent"?
+        # Answer: "content" is for human display, "structuredContent" for programmatic use
+        # =====================================================================
+        """
         logger.debug("Handling complementary content with params", params=params)
 
+        # TODO [L3] AIKH-562: TC-COMPLEMENT-001 - Parameter validation
         required_params = ["target_query", "context_query"]
         for param in required_params:
             if param not in params:
@@ -396,6 +447,7 @@ class IntelligenceHandler:
                 )
 
         try:
+            # TODO [L3] AIKH-563: TC-COMPLEMENT-002 - Delegate to SearchEngine (L2)
             logger.info("🔍 About to call search_engine.find_complementary_content")
             logger.info(f"🔍 search_engine type: {type(self.search_engine)}")
             logger.info(f"🔍 search_engine is None: {self.search_engine is None}")

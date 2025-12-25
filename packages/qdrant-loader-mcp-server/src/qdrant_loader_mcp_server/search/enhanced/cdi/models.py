@@ -168,7 +168,26 @@ class CitationNetwork:
 
 @dataclass
 class ComplementaryContent:
-    """Represents complementary content recommendations."""
+    """Represents complementary content recommendations.
+
+    # =========================================================================
+    # TODO [L1] AIKH-485/AIKH-571: COMPLEMENTARY CONTENT OUTPUT MODEL
+    # =========================================================================
+    # This is the OUTPUT data structure returned by ComplementaryContentFinder.
+    #
+    # STRUCTURE:
+    # - target_doc_id: The document we're finding complements FOR
+    # - recommendations: List of (doc_id, score, reason) tuples
+    # - recommendation_strategy: "mixed" | "intra_project" | "inter_project"
+    # - generated_at: Timestamp for caching/freshness
+    #
+    # FLOW: finders.py → ComplementaryContent → intelligence_handler.py
+    #
+    # EXERCISE: Why is recommendations a list of tuples instead of dicts?
+    # Answer: Tuples are immutable and lighter; dicts created only on demand
+    #         via get_top_recommendations() for MCP response formatting
+    # =========================================================================
+    """
 
     target_doc_id: str
     recommendations: list[tuple[str, float, str]] = field(
@@ -178,6 +197,9 @@ class ComplementaryContent:
     generated_at: datetime = field(default_factory=datetime.now)
 
     def get_top_recommendations(self, limit: int = 5) -> list[dict[str, Any]]:
+        # TODO [L1] AIKH-485/AIKH-571: TC-COMPLEMENT-010 - Response formatting
+        # This method transforms internal tuples → MCP-friendly dicts
+        # Called by intelligence_handler.py for structured response
         """Get top N recommendations with detailed information."""
         # Validate input limit explicitly to avoid silent misuse
         if not isinstance(limit, int) or limit <= 0:

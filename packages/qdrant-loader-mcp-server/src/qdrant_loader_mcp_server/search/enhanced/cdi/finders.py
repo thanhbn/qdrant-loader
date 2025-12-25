@@ -4,6 +4,22 @@ Complementary Content Discovery for Cross-Document Intelligence.
 This module implements advanced complementary content discovery that identifies
 documents which enhance understanding of a target document through
 requirements-implementation chains, abstraction gaps, and cross-functional relationships.
+
+# =============================================================================
+# TODO [L1] AIKH-485: SPIKE-005 - Domain/Business Layer Masking
+# =============================================================================
+# This file contains the CORE BUSINESS LOGIC for complementary content discovery.
+# It is the L1 (Domain) layer - the most important layer for understanding
+# how the system determines document complementarity.
+#
+# Key Learning Areas:
+# 1. Scoring Algorithm (AIKH-564): How complementary scores are calculated
+# 2. Requirements-Implementation Detection (AIKH-565): Linking specs to code
+# 3. Abstraction Gap Analysis (AIKH-566): Finding documents at different levels
+# 4. Cross-Functional Relationships (AIKH-567): Business + Technical pairing
+#
+# Study Order: Start with find_complementary_content() -> _calculate_complementary_score()
+# =============================================================================
 """
 
 from __future__ import annotations
@@ -44,7 +60,28 @@ logger = LoggingConfig.get_logger(__name__)
 
 
 class ComplementaryContentFinder:
-    """Finds complementary content that would enhance understanding of a target document."""
+    """Finds complementary content that would enhance understanding of a target document.
+
+    # =========================================================================
+    # TODO [L1] AIKH-485/AIKH-564: ComplementaryContentFinder - Core Business Entity
+    # =========================================================================
+    # BUSINESS PURPOSE: This class encapsulates the domain logic for discovering
+    # documents that COMPLEMENT (not duplicate) a target document.
+    #
+    # KEY CONCEPT - "Complementary" means:
+    # - Documents that provide DIFFERENT perspectives on the same topic
+    # - Requirements docs paired with Implementation docs
+    # - High-level strategy paired with detailed technical specs
+    # - Business workflows paired with technical architecture
+    #
+    # DEPENDENCIES:
+    # - similarity_calculator: Computes similarity scores between documents
+    # - knowledge_graph: Optional graph for entity relationships
+    #
+    # EXERCISE: What makes this different from "find_similar_documents"?
+    # Answer: Similar docs are DUPLICATES, complementary docs are ENHANCERS.
+    # =========================================================================
+    """
 
     def __init__(
         self,
@@ -62,7 +99,27 @@ class ComplementaryContentFinder:
         candidate_docs,
         max_recommendations: int = 5,
     ) -> ComplementaryContent:
-        """Find complementary content for a target document."""
+        """Find complementary content for a target document.
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-570: MAIN ENTRY POINT - find_complementary_content
+        # =====================================================================
+        # ALGORITHM OVERVIEW:
+        # 1. Iterate through all candidate_docs
+        # 2. Skip if candidate == target (no self-complementarity)
+        # 3. Calculate complementary score via _calculate_complementary_score()
+        # 4. Filter: only include if score > 0.15 (THRESHOLD)
+        # 5. Sort by score descending
+        # 6. Return top max_recommendations
+        #
+        # CRITICAL THRESHOLD: 0.15
+        # - Below 0.15: Not considered complementary enough
+        # - Above 0.15: Included in recommendations
+        #
+        # EXERCISE: Why is threshold 0.15 instead of 0.5?
+        # Hint: Complementary doesn't mean highly similar - even 20% overlap is useful
+        # =====================================================================
+        """
         start_time = time.time()
 
         recommendations = []
@@ -127,6 +184,32 @@ class ComplementaryContentFinder:
 
         Redesigned algorithm that prioritizes intra-project relationships while
         maintaining intelligent inter-project discovery capabilities.
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-564: CORE SCORING ALGORITHM
+        # =====================================================================
+        # This is the HEART of the complementary content system.
+        #
+        # DECISION TREE:
+        # 1. Check if same_project (target.project_id == candidate.project_id)
+        #
+        # 2. IF same_project (AIKH-568):
+        #    - Use _score_intra_project_complementary()
+        #    - Apply BOOST if high topic overlap: score * 1.2
+        #    - Cap at 0.95 maximum
+        #
+        # 3. IF different_project (AIKH-569):
+        #    - Use _score_inter_project_complementary()
+        #    - Apply PENALTY: score * 0.8
+        #    - Reason: Inter-project content is less immediately useful
+        #
+        # SCORING PHILOSOPHY:
+        # - Intra-project: "These docs work together in YOUR project"
+        # - Inter-project: "Learn from OTHER projects' similar solutions"
+        #
+        # EXERCISE: Why does intra-project get a boost but inter-project gets penalty?
+        # Answer: Users typically want context from their OWN project first
+        # =====================================================================
         """
         self.logger.info(
             f"=== Scoring {candidate_doc.source_title} against {target_doc.source_title} ==="
@@ -175,10 +258,39 @@ class ComplementaryContentFinder:
     def _score_intra_project_complementary(
         self, target_doc, candidate_doc
     ) -> tuple[float, str]:
-        """Score complementary relationships within the same project."""
+        """Score complementary relationships within the same project.
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-568: INTRA-PROJECT SCORING (Same Project)
+        # =====================================================================
+        # SCORING FACTORS (in priority order):
+        #
+        # A. Requirements ↔ Implementation Chain (AIKH-565)
+        #    Score: 0.85 - HIGHEST priority
+        #    Example: "User Requirements" + "API Implementation"
+        #
+        # B. Abstraction Level Differences (AIKH-566)
+        #    Score: 0.7 + (abstraction_gap * 0.1)
+        #    Levels: 0=Strategy, 1=Requirements, 2=Design, 3=Implementation
+        #    Example: "Vision Doc" (0) + "Code Guide" (3) = gap 3 → 1.0
+        #
+        # C. Cross-Functional Perspectives (AIKH-567)
+        #    Score: 0.75
+        #    Example: "Business Workflow" + "Technical Architecture"
+        #
+        # D. Topic Overlap with Different Document Types
+        #    Score: 0.35 + (shared_topics * 0.1), max 0.65
+        #    Example: "Auth Tutorial" + "Auth API Reference"
+        #
+        # EXERCISE: Which factor has highest priority and why?
+        # Answer: Requirements-Implementation (0.85) because it creates
+        #         the most valuable "spec to code" traceability
+        # =====================================================================
+        """
         factors = []
 
         # A. Requirements ↔ Implementation Chain
+        # TODO [L1] AIKH-565: TC-COMPLEMENT-004 - Requirements-Implementation pairs detection
         if self._is_requirements_implementation_pair(target_doc, candidate_doc):
             factors.append((0.85, "requirements-implementation"))
             self.logger.info("✓ Found requirements-implementation pair")
@@ -218,10 +330,43 @@ class ComplementaryContentFinder:
     def _score_inter_project_complementary(
         self, target_doc, candidate_doc
     ) -> tuple[float, str]:
-        """Score complementary relationships between different projects."""
+        """Score complementary relationships between different projects.
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-569: INTER-PROJECT SCORING (Different Projects)
+        # =====================================================================
+        # When documents are from DIFFERENT projects, we look for:
+        #
+        # A. Similar Challenges/Solutions
+        #    Score: 0.8
+        #    Patterns: auth, scalability, compliance, integration, security, migration
+        #    Example: Both projects solving "authentication" problems
+        #
+        # B. Domain Expertise Transfer
+        #    Score: 0.75
+        #    Domains: healthcare, fintech, ecommerce, education, etc.
+        #    Example: Healthcare project can learn from another healthcare project
+        #
+        # C. Architectural Patterns
+        #    Score: 0.7
+        #    Patterns: microservices, event-driven, API gateway, CQRS
+        #    Example: Both projects using "microservices" architecture
+        #
+        # D. Shared Technologies/Standards
+        #    Score: 0.3 + (shared_count * 0.1), max 0.6
+        #    Technologies: React, Python, Kubernetes, OAuth, etc.
+        #
+        # IMPORTANT: All inter-project scores get 0.8 PENALTY applied later
+        # This keeps intra-project content prioritized over external references
+        #
+        # EXERCISE: When would inter-project complementary be MORE valuable?
+        # Answer: When your project is new and can learn from established patterns
+        # =====================================================================
+        """
         factors = []
 
         # A. Similar Challenges/Solutions
+        # TODO [L1] AIKH-569: TC-COMPLEMENT-008 - Inter-project challenge detection
         if self._has_similar_challenges(target_doc, candidate_doc):
             factors.append((0.8, "Similar challenges/solutions"))
             self.logger.info("✓ Similar challenges detected")
@@ -290,7 +435,32 @@ class ComplementaryContentFinder:
         return final_score, primary_reason
 
     def _is_requirements_implementation_pair(self, doc1, doc2) -> bool:
-        """Detect if documents form a requirements -> implementation chain."""
+        """Detect if documents form a requirements -> implementation chain.
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-565: REQUIREMENTS-IMPLEMENTATION DETECTION
+        # =====================================================================
+        # This method detects the classic "spec to code" relationship.
+        #
+        # KEYWORD MATCHING:
+        # - Requirements keywords: requirements, specification, user story, feature, functional
+        # - Implementation keywords: implementation, technical, architecture, api, code, development
+        #
+        # LOGIC:
+        # 1. Check if doc1 is requirements AND doc2 is implementation, OR vice versa
+        # 2. For SAME PROJECT: automatically return True (project context provides relationship)
+        # 3. For DIFFERENT PROJECTS: require shared topics or entities
+        #
+        # EXAMPLE PAIRS:
+        # - "User Authentication Requirements" + "Auth API Implementation" → True
+        # - "Feature Specification" + "Technical Design" → True
+        # - "Random Doc" + "Random Doc 2" → False
+        #
+        # EXERCISE: Why do we require shared topics for different projects?
+        # Answer: Without shared context, "requirements" from Project A
+        #         isn't relevant to "implementation" from Project B
+        # =====================================================================
+        """
         req_keywords = [
             "requirements",
             "specification",
@@ -341,13 +511,54 @@ class ComplementaryContentFinder:
     def _calculate_abstraction_gap(self, doc1: SearchResult, doc2: SearchResult) -> int:
         """Calculate difference in abstraction levels (0-3).
         0: Same level, 3: Maximum gap (e.g., epic vs implementation detail)
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-566: ABSTRACTION GAP CALCULATION
+        # =====================================================================
+        # Gap = abs(level1 - level2)
+        # - Gap 0: Same abstraction level (not complementary by this metric)
+        # - Gap 1: Adjacent levels (somewhat complementary)
+        # - Gap 2: Two levels apart (good complementary)
+        # - Gap 3: Maximum gap, e.g., Strategy (0) vs Implementation (3)
+        #
+        # SCORING FORMULA: 0.7 + (gap * 0.1)
+        # - Gap 1 → 0.8
+        # - Gap 2 → 0.9
+        # - Gap 3 → 1.0 (capped at 0.95 by weighted score)
+        # =====================================================================
         """
         level1 = self._get_abstraction_level(doc1)
         level2 = self._get_abstraction_level(doc2)
         return abs(level1 - level2)
 
     def _get_abstraction_level(self, doc: SearchResult) -> int:
-        """Determine abstraction level of document (0=highest, 3=lowest)."""
+        """Determine abstraction level of document (0=highest, 3=lowest).
+
+        # =====================================================================
+        # TODO [L1] AIKH-485/AIKH-566: ABSTRACTION LEVEL CLASSIFICATION
+        # =====================================================================
+        # ABSTRACTION PYRAMID:
+        #
+        # Level 0 - STRATEGIC (Highest)
+        #   Keywords: strategy, vision, overview, executive, business case
+        #   Example: "Company Vision 2025", "Executive Summary"
+        #
+        # Level 1 - REQUIREMENTS
+        #   Keywords: requirements, features, user story, epic, specification
+        #   Example: "User Authentication Requirements", "Feature Spec"
+        #
+        # Level 2 - DESIGN (Default)
+        #   Keywords: design, architecture, workflow, process, wireframe
+        #   Example: "System Architecture", "UI Wireframes"
+        #
+        # Level 3 - IMPLEMENTATION (Lowest)
+        #   Keywords: implementation, code, api, technical, development, configuration
+        #   Example: "API Documentation", "Code Standards"
+        #
+        # EXERCISE: If doc has no matching keywords, what level is assigned?
+        # Answer: Level 2 (Design) - middle ground assumption
+        # =====================================================================
+        """
         title = doc.source_title.lower()
 
         # Level 0: High-level business/strategy

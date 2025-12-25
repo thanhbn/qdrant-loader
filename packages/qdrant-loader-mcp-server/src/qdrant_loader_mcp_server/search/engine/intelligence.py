@@ -4,6 +4,25 @@ Cross-Document Intelligence Operations.
 This module implements cross-document intelligence functionality including
 document relationship analysis, similarity detection, conflict detection,
 complementary content discovery, and document clustering.
+
+# =============================================================================
+# TODO [L2] AIKH-485: SPIKE-005 - Application Layer Masking
+# =============================================================================
+# This file is the L2 (Application) layer - the ORCHESTRATION layer.
+# It sits between L3 (MCP handlers) and L1 (CDI business logic).
+#
+# RESPONSIBILITY:
+# - Coordinate search operations with hybrid search API
+# - Handle retry logic and fallback queries
+# - Transform results between layers
+#
+# Key Method: find_complementary_content() (line ~364)
+# - Manages target document search with retries
+# - Calculates adaptive limit for context search
+# - Delegates to HybridSearchAPI.find_complementary_content()
+#
+# Study Order: After L1 (finders.py), study how this layer orchestrates
+# =============================================================================
 """
 
 from contextlib import contextmanager
@@ -381,11 +400,36 @@ class IntelligenceOperations:
 
         Returns:
             Dict containing complementary recommendations and target document info
+
+        # =====================================================================
+        # TODO [L2] AIKH-485/AIKH-563: APPLICATION ORCHESTRATION LAYER
+        # =====================================================================
+        # This method orchestrates the find_complementary_content flow:
+        #
+        # STEP 1: TARGET DOCUMENT SEARCH
+        #   - Search with target_query, limit=1
+        #   - If no results: sanitize query (remove stopwords)
+        #   - If still no results: try "Mya Health " + tokens[:2]
+        #   - If still no results: try generic "Mya Health"
+        #
+        # STEP 2: CONTEXT DOCUMENT SEARCH
+        #   - Calculate adaptive_limit = max(max_recommendations * 4, 20)
+        #   - Search with context_query, limit=adaptive_limit
+        #   - If no results: try broad "Mya Health documentation architecture project"
+        #
+        # STEP 3: DELEGATE TO L1
+        #   - Call hybrid_search.find_complementary_content(target, candidates, max)
+        #   - Transform results to expected format
+        #
+        # EXERCISE: Why is adaptive_limit = max(recommendations * 4, 20)?
+        # Answer: Need more candidates than final results to ensure quality after scoring
+        # =====================================================================
         """
         if not self.engine.hybrid_search:
             raise RuntimeError("Search engine not initialized")
 
         try:
+            # TODO [L2] AIKH-563: TC-COMPLEMENT-002 - Target search with retries
             self.logger.info(
                 f"🔍 Step 1: Searching for target document with query: '{target_query}'"
             )

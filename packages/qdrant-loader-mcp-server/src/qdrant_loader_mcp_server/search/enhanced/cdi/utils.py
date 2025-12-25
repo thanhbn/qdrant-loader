@@ -100,6 +100,28 @@ TITLE_STOP_WORDS: set[str] = {
     "with",
 }
 
+# =============================================================================
+# TODO [L1] AIKH-485/AIKH-569: INTER-PROJECT DETECTION CONSTANTS
+# =============================================================================
+# These constants define WHAT PATTERNS the system recognizes for inter-project
+# complementary discovery. Used by has_transferable_domain_knowledge() and
+# has_reusable_architecture_patterns() in similarity_helpers.py.
+#
+# DOMAIN_KEYWORDS: Groups of related domain terms
+# - If both docs match same group → "transferable domain knowledge"
+# - Example: ["healthcare", "patient"] in doc1 + ["medical", "clinical"] in doc2
+#
+# ARCHITECTURE_PATTERNS: Groups of architectural concepts
+# - If both docs match same group → "reusable architecture patterns"
+# - Example: ["api", "rest"] in doc1 + ["graphql", "endpoint"] in doc2
+#
+# EXERCISE: Why are these lists of lists instead of flat sets?
+# Answer: Each inner list is a CONCEPT GROUP. Matching ANY keyword from same
+#         group indicates shared domain/pattern. Flat set would lose grouping.
+#
+# TO EXTEND: Add new domain/pattern groups as business needs evolve
+# =============================================================================
+
 # Domain and architecture keyword groups
 DOMAIN_KEYWORDS: list[list[str]] = [
     ["healthcare", "medical", "patient", "clinical"],
