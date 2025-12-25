@@ -19,6 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.claude
+*claude/
+workspace/
+.run/
+CLAUDE.md
+scripts/
+self-explores/
+test_*.py
 
 # Virtual Environment
 venv/
