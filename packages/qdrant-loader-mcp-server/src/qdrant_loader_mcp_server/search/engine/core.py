@@ -485,15 +485,35 @@ class SearchEngine:
         project_ids: list[str] | None = None,
     ) -> dict | list[dict]:
         """Find similar documents."""
+        # TODO [L2/AIKH-593]: Implement similarity_threshold filtering
+        # Use Case: TC-SIMILAR-005 - Similarity threshold filtering
+        # Business Rule: Filter results where similarity_score < similarity_threshold
+        # Current State: Parameter accepted but NOT YET implemented (v0.7.4)
+        # Enhancement: Apply threshold after similarity calculation, before sorting
+        # -----------------------------------------------------------
         if not self._search_ops:
             raise RuntimeError("Search engine not initialized")
 
+        # TODO [L2/AIKH-595]: Support cross-source-type similarity search
+        # Use Case: TC-SIMILAR-007 - Cross-source-type similarity
+        # Business Rule: Find similar documents across different source types (git, confluence, jira)
+        # Data Flow: source_types=None allows cross-source; specific types restrict scope
+        # Test: test_find_similar_cross_source_type
+        # -----------------------------------------------------------
         # First, search for target documents
         target_documents = await self._search_ops.search(
             target_query, source_types, 1, project_ids
         )
+        # -----------------------------------------------------------
+
+        # TODO [L2/AIKH-598]: Handle case when no target document found
+        # Use Case: TC-SIMILAR-010 - Document with no similar matches
+        # Business Rule: Return empty dict {} if target not found
+        # Test: test_find_similar_no_target
+        # -----------------------------------------------------------
         if not target_documents:
             return {}
+        # -----------------------------------------------------------
 
         # Then search for comparison documents
         comparison_documents = await self._search_ops.search(

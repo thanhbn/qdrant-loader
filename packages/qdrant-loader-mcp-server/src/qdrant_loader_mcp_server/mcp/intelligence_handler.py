@@ -123,6 +123,12 @@ class IntelligenceHandler:
         """Handle find similar documents request."""
         logger.debug("Handling find similar documents with params", params=params)
 
+        # TODO [L3/AIKH-597]: Validate required parameters (target_query, comparison_query)
+        # Use Case: TC-SIMILAR-009 - Invalid document_id error handling
+        # Business Rule: Return MCP error code -32602 if required params missing
+        # MCP Protocol: JSON-RPC 2.0 error codes for invalid params
+        # Test: test_handle_find_similar_documents_missing_params
+        # -----------------------------------------------------------
         # Validate required parameters
         if "target_query" not in params or "comparison_query" not in params:
             logger.error(
@@ -136,6 +142,7 @@ class IntelligenceHandler:
                     "data": "Missing required parameters: target_query and comparison_query",
                 },
             )
+        # -----------------------------------------------------------
 
         try:
             logger.info(
@@ -144,6 +151,12 @@ class IntelligenceHandler:
                 comparison_query=params["comparison_query"],
             )
 
+            # TODO [L3/AIKH-589]: Delegate to SearchEngine.find_similar_documents
+            # Use Case: TC-SIMILAR-001 - Find similar by target_query & comparison_query
+            # Business Rule: max_similar defaults to 5 (AIKH-591: TC-SIMILAR-003)
+            # Data Flow: MCP params -> SearchEngine -> HybridSearchEngine -> CDI
+            # Delegates to: L2 SearchEngine.find_similar_documents()
+            # -----------------------------------------------------------
             # Use the sophisticated SearchEngine method
             similar_docs_raw = await self.search_engine.find_similar_documents(
                 target_query=params["target_query"],
@@ -153,7 +166,14 @@ class IntelligenceHandler:
                 source_types=params.get("source_types"),
                 project_ids=params.get("project_ids"),
             )
+            # -----------------------------------------------------------
 
+            # TODO [L3/AIKH-619]: Normalize result from SearchEngine
+            # Use Case: TC-SIMILAR-000 - Find similar by document_id
+            # Business Rule: Handle both list and dict return types from SearchEngine
+            # Data Flow: similar_docs_raw (list|dict) -> similar_docs (list)
+            # Bug History: Commit 2559f48 fixed missing document ID propagation
+            # -----------------------------------------------------------
             # Normalize result: engine may return list, but can return {} on empty
             if isinstance(similar_docs_raw, list):
                 similar_docs = similar_docs_raw
@@ -165,6 +185,7 @@ class IntelligenceHandler:
                 )
             else:
                 similar_docs = []
+            # -----------------------------------------------------------
 
             logger.info(f"Got {len(similar_docs)} similar documents from SearchEngine")
 
@@ -196,11 +217,23 @@ class IntelligenceHandler:
                 )
             )
 
+            # TODO [L3/AIKH-590]: Build schema-compliant structured content for MCP response
+            # Use Case: TC-SIMILAR-002 - Similarity score in response (0.0-1.0)
+            # Business Rule: MCP Protocol 2025-06-18 requires structuredContent format
+            # Data Flow: similar_docs -> similar_documents (schema-compliant list)
+            # Bug History: Commit de746da fixed metric key serialization (enum -> string)
+            # -----------------------------------------------------------
             # ✅ Build schema-compliant structured content for find_similar_documents
             similar_documents = []
             metrics_used_set: set[str] = set()
             highest_similarity = 0.0
+            # -----------------------------------------------------------
 
+            # TODO [L3/AIKH-590]: Iterate and transform each similar document
+            # Use Case: TC-SIMILAR-002 - Build document dict with similarity_score, metric_scores
+            # Business Rule: Normalize metric keys to strings (Enums -> value)
+            # Data Flow: item (dict) -> normalized document dict
+            # -----------------------------------------------------------
             for item in similar_docs:
                 # Normalize access to document fields
                 document = item.get("document") if isinstance(item, dict) else None
@@ -263,7 +296,13 @@ class IntelligenceHandler:
                         ),
                     }
                 )
+            # -----------------------------------------------------------
 
+            # TODO [L3/AIKH-590]: Build similarity_summary with aggregated statistics
+            # Use Case: TC-SIMILAR-002 - Include metrics_used in response
+            # Business Rule: Sort metrics for deterministic output
+            # Data Flow: metrics_used_set -> sorted list for JSON response
+            # -----------------------------------------------------------
             structured_content = {
                 "similar_documents": similar_documents,
                 # target_document is optional; omitted when unknown
@@ -277,7 +316,14 @@ class IntelligenceHandler:
                     ),
                 },
             }
+            # -----------------------------------------------------------
 
+            # TODO [L3/AIKH-484]: Create MCP-compliant response with content and structuredContent
+            # Use Case: MCP Protocol compliance for find_similar_documents
+            # Business Rule: Include both human-readable text and structured JSON
+            # MCP Protocol: content (text) + structuredContent (JSON) + isError flag
+            # Test: test_handle_find_similar_documents
+            # -----------------------------------------------------------
             return self.protocol.create_response(
                 request_id,
                 result={
@@ -293,6 +339,7 @@ class IntelligenceHandler:
                     "isError": False,
                 },
             )
+            # -----------------------------------------------------------
 
         except Exception:
             logger.error("Error finding similar documents", exc_info=True)

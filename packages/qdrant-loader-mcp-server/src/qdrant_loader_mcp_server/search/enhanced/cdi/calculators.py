@@ -57,6 +57,11 @@ class DocumentSimilarityCalculator:
         metrics: list[SimilarityMetric] = None,
     ) -> DocumentSimilarity:
         """Calculate comprehensive similarity between two documents."""
+        # TODO [L1/AIKH-590]: Set default metrics if none provided
+        # Use Case: Default behavior when no specific metrics requested
+        # Business Rule: Default metrics = ENTITY_OVERLAP, TOPIC_OVERLAP, METADATA_SIMILARITY, CONTENT_FEATURES
+        # Test: test_calculate_similarity_metrics
+        # -----------------------------------------------------------
         if metrics is None:
             metrics = [
                 SimilarityMetric.ENTITY_OVERLAP,
@@ -64,10 +69,23 @@ class DocumentSimilarityCalculator:
                 SimilarityMetric.METADATA_SIMILARITY,
                 SimilarityMetric.CONTENT_FEATURES,
             ]
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-596]: Track processing time for performance monitoring
+        # Use Case: TC-SIMILAR-008 - Performance < 400ms requirement
+        # Business Rule: Total similarity calculation should complete within 400ms
+        # Monitoring: Log warning if processing_time > 400ms
+        # -----------------------------------------------------------
         start_time = time.time()
         metric_scores = {}
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-590]: Calculate individual metric scores based on requested metrics
+        # Use Case: Multi-dimensional similarity analysis
+        # Business Rule: Each metric uses specialized algorithm (Jaccard, SpaCy, etc.)
+        # Test: test_calculate_similarity_same_project_same_topic
+        # Data Flow: doc1, doc2 -> metric functions -> metric_scores dict
+        # -----------------------------------------------------------
         # Calculate individual metric scores
         for metric in metrics:
             if metric == SimilarityMetric.ENTITY_OVERLAP:
@@ -88,22 +106,54 @@ class DocumentSimilarityCalculator:
                 )
             elif metric == SimilarityMetric.SEMANTIC_SIMILARITY:
                 metric_scores[metric] = self._calculate_semantic_similarity(doc1, doc2)
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-590]: Combine metric scores into final similarity score
+        # Use Case: TC-SIMILAR-002 - Similarity score in response (0.0-1.0)
+        # Business Rule: Weighted average with metric-specific weights
+        # Git: "refactor(cdi): enhance conflict detection and similarity calculations"
+        # -----------------------------------------------------------
         # Calculate combined similarity score
         combined_score = self._combine_metric_scores(metric_scores)
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-599]: Detect very similar content (potential duplicates)
+        # Use Case: TC-SIMILAR-011 - Very similar content detection
+        # Business Rule: Flag documents with similarity_score > 0.95 as potential duplicates
+        # Enhancement: Could add "is_potential_duplicate" flag to DocumentSimilarity
+        # Note: High similarity may indicate: duplicate content, same source, or copy-paste
+        # -----------------------------------------------------------
+        # (Threshold-based duplicate detection would be implemented here)
+        # -----------------------------------------------------------
+
+        # TODO [L1/AIKH-590]: Extract shared entities and topics for explanation
+        # Use Case: Provide transparency about why documents are similar
+        # Business Rule: Return top shared entities/topics for display
+        # Test: test_shared_entities_extraction
+        # -----------------------------------------------------------
         # Extract shared entities and topics
         shared_entities = self._get_shared_entities(doc1, doc2)
         shared_topics = self._get_shared_topics(doc1, doc2)
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-594]: Determine relationship type based on metrics
+        # Use Case: TC-SIMILAR-006 - Cross-project similarity categorization
+        # Business Rule: Hierarchical > Cross-reference > Project grouping > Semantic
+        # Test: test_relationship_type_determination
+        # -----------------------------------------------------------
         # Determine relationship type
         relationship_type = self._determine_relationship_type(doc1, doc2, metric_scores)
+        # -----------------------------------------------------------
 
         processing_time = (time.time() - start_time) * 1000
         self.logger.debug(
             f"Calculated similarity between documents in {processing_time:.2f}ms"
         )
 
+        # TODO [L1/AIKH-590]: Return DocumentSimilarity dataclass with all computed values
+        # Use Case: Structured result for downstream processing
+        # Data Flow: combined_score, metric_scores, shared_entities, shared_topics, relationship_type -> DocumentSimilarity
+        # -----------------------------------------------------------
         return DocumentSimilarity(
             doc1_id=f"{doc1.source_type}:{doc1.source_title}",
             doc2_id=f"{doc2.source_type}:{doc2.source_title}",
@@ -113,6 +163,7 @@ class DocumentSimilarityCalculator:
             shared_topics=shared_topics,
             relationship_type=relationship_type,
         )
+        # -----------------------------------------------------------
 
     def _calculate_entity_overlap(
         self, doc1: SearchResult, doc2: SearchResult
@@ -149,6 +200,11 @@ class DocumentSimilarityCalculator:
         self, doc1: SearchResult, doc2: SearchResult
     ) -> float:
         """Calculate hierarchical relationship similarity."""
+        # TODO [L1/AIKH-594]: Check for direct parent-child relationship
+        # Use Case: Hierarchical documents like Confluence pages with parent
+        # Business Rule: Direct parent-child = 1.0 (maximum hierarchy similarity)
+        # Test: test_calculate_hierarchical_similarity
+        # -----------------------------------------------------------
         # Check for direct parent-child relationship
         if (
             doc1.parent_id
@@ -160,16 +216,29 @@ class DocumentSimilarityCalculator:
             and doc2.parent_id == f"{doc1.source_type}:{doc1.source_title}"
         ):
             return 1.0
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-594]: Check for sibling relationship (same parent)
+        # Use Case: Documents under the same parent page
+        # Business Rule: Sibling relationship = 0.8 (high but not maximum)
+        # Test: test_calculate_hierarchical_similarity_siblings
+        # -----------------------------------------------------------
         # Check for sibling relationship (same parent)
         if doc1.parent_id and doc2.parent_id and doc1.parent_id == doc2.parent_id:
             return 0.8
+        # -----------------------------------------------------------
 
+        # TODO [L1/AIKH-594]: Calculate breadcrumb-based similarity
+        # Use Case: Documents in same hierarchy path but not direct relatives
+        # Business Rule: Use breadcrumb path comparison for distance calculation
+        # Test: test_calculate_hierarchical_similarity_unrelated
+        # -----------------------------------------------------------
         # Breadcrumb-based similarity
         if doc1.breadcrumb_text and doc2.breadcrumb_text:
             return hierarchical_distance_from_breadcrumbs(
                 doc1.breadcrumb_text, doc2.breadcrumb_text
             )
+        # -----------------------------------------------------------
 
         return 0.0
 
@@ -177,11 +246,18 @@ class DocumentSimilarityCalculator:
         self, doc1: SearchResult, doc2: SearchResult
     ) -> float:
         """Calculate semantic similarity using spaCy."""
+        # TODO [L1/AIKH-600]: Calculate semantic similarity using SpaCy word vectors
+        # Use Case: TC-SIMILAR-012 - Semantic vs lexical similarity
+        # Business Rule: Semantic similarity captures meaning beyond exact word matches
+        # Algorithm: SpaCy word vector cosine similarity
+        # Trade-off: More compute-intensive but better for paraphrased content
+        # -----------------------------------------------------------
         try:
             return cdi_calc_semantic_spacy(self.spacy_analyzer, doc1.text, doc2.text)
         except Exception as e:
             self.logger.warning(f"Failed to calculate semantic similarity: {e}")
             return 0.0
+        # -----------------------------------------------------------
 
     def _combine_metric_scores(
         self, metric_scores: dict[SimilarityMetric, float]
@@ -242,6 +318,11 @@ class DocumentSimilarityCalculator:
         metric_scores: dict[SimilarityMetric, float],
     ) -> RelationshipType:
         """Determine the type of relationship between documents."""
+        # TODO [L1/AIKH-594]: Prioritized relationship type detection
+        # Use Case: TC-SIMILAR-006 - Cross-project similarity categorization
+        # Business Rule: Priority order - Hierarchical > Cross-reference > Project grouping > Semantic
+        # Test: test_relationship_type_determination, test_determine_relationship_type_edge_cases
+        # -----------------------------------------------------------
         # Check for hierarchical relationship
         if (
             SimilarityMetric.HIERARCHICAL_DISTANCE in metric_scores
@@ -259,3 +340,4 @@ class DocumentSimilarityCalculator:
 
         # Default to semantic similarity
         return RelationshipType.SEMANTIC_SIMILARITY
+        # -----------------------------------------------------------
