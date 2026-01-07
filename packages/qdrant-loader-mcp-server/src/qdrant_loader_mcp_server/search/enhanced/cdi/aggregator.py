@@ -486,6 +486,57 @@ class EvidenceAggregator:
             return ConflictSeverity.HIGH
         return ConflictSeverity.CRITICAL
 
+    def aggregate(self, evidence_items: list[EvidenceItem]) -> AggregatedResult:
+        """Aggregate pre-collected evidence items into a result.
+
+        This method is used when evidence has already been collected
+        from external sources and just needs to be aggregated.
+
+        Args:
+            evidence_items: List of pre-collected evidence items
+
+        Returns:
+            AggregatedResult with aggregated confidence and severity
+        """
+        if not evidence_items:
+            return AggregatedResult(
+                has_conflict=False,
+                confidence=0.0,
+                severity=ConflictSeverity.NONE,
+                evidence=[],
+                explanation="No evidence collected",
+            )
+
+        # Calculate weighted confidence
+        total_weight = 0.0
+        weighted_score = 0.0
+
+        for item in evidence_items:
+            weight = self._get_weight_for_source(item.source)
+            weighted_score += item.score * weight
+            total_weight += weight
+
+        final_confidence = weighted_score / total_weight if total_weight > 0 else 0.0
+
+        # Determine severity
+        severity = self._score_to_severity(final_confidence)
+
+        # Determine if conflict exists
+        config = get_config()
+        has_conflict = final_confidence >= config.nli_contradiction_threshold
+
+        # Build explanation
+        explanations = [item.description for item in evidence_items if item.description]
+        explanation = "; ".join(explanations) if explanations else "Evidence aggregated"
+
+        return AggregatedResult(
+            has_conflict=has_conflict,
+            confidence=final_confidence,
+            severity=severity,
+            evidence=evidence_items,
+            explanation=explanation,
+        )
+
     def detect_conflicts_batch(
         self,
         text_pairs: list[tuple[str, str]],

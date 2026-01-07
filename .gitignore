@@ -21,6 +21,7 @@ wheels/
 *.egg
 .claude
 *claude/
+.gemini/
 workspace/
 .run/
 CLAUDE.md
