@@ -52,7 +52,7 @@ from .topic_filter import get_topic_filter
 
 # V2 CDI modules for semantic analysis
 from .nli_detector import get_nli_detector, NLILabel
-from .atomic_facts import get_fact_extractor, FactComparator
+from .atomic_facts import get_fact_extractor, compare_document_facts
 from .aggregator import (
     EvidenceAggregator,
     EvidenceItem,
@@ -104,7 +104,6 @@ class ConflictDetector:
         # V2 CDI components - initialized lazily when needed
         self._nli_detector = None
         self._fact_extractor = None
-        self._fact_comparator = None
         self._evidence_aggregator = None
         self._v2_initialized = False
 
@@ -151,8 +150,7 @@ class ConflictDetector:
 
             if config.use_atomic_facts:
                 self._fact_extractor = get_fact_extractor()
-                self._fact_comparator = FactComparator()
-                self.logger.debug("V2: Fact extractor and comparator initialized")
+                self.logger.debug("V2: Fact extractor initialized")
 
             # Initialize evidence aggregator
             self._evidence_aggregator = EvidenceAggregator()
@@ -189,6 +187,7 @@ class ConflictDetector:
                         EvidenceItem(
                             source=EvidenceSource.NLI,
                             score=nli_result.contradiction_score,
+                            description=f"NLI contradiction detected (score={nli_result.contradiction_score:.2f})",
                             details={
                                 "label": nli_result.label.value,
                                 "contradiction_score": nli_result.contradiction_score,
@@ -203,39 +202,36 @@ class ConflictDetector:
                 self.logger.warning(f"V2 NLI detection failed: {e}")
 
         # 2. Atomic fact extraction and comparison
-        if self._fact_extractor and self._fact_comparator and config.use_atomic_facts:
+        if self._fact_extractor and config.use_atomic_facts:
             try:
-                facts1 = self._fact_extractor.extract(text1)
-                facts2 = self._fact_extractor.extract(text2)
+                # Use compare_document_facts which handles extraction and comparison
+                conflicts = compare_document_facts(text1, text2)
 
-                if facts1.facts and facts2.facts:
-                    comparison = self._fact_comparator.compare(facts1.facts, facts2.facts)
-                    if comparison.conflicts:
-                        # Average conflict scores
-                        avg_score = sum(c.score for c in comparison.conflicts) / len(
-                            comparison.conflicts
+                if conflicts:
+                    # Average conflict confidences
+                    avg_score = sum(c["confidence"] for c in conflicts) / len(conflicts)
+                    evidence_items.append(
+                        EvidenceItem(
+                            source=EvidenceSource.ATOMIC_FACTS,
+                            score=avg_score,
+                            description=f"Found {len(conflicts)} fact conflict(s) between documents",
+                            details={
+                                "conflict_count": len(conflicts),
+                                "conflicts": [
+                                    {
+                                        "fact1": c["fact1"],
+                                        "fact2": c["fact2"],
+                                        "conflict_type": c["conflict_type"],
+                                        "confidence": c["confidence"],
+                                    }
+                                    for c in conflicts[:5]  # Limit details
+                                ],
+                            },
                         )
-                        evidence_items.append(
-                            EvidenceItem(
-                                source=EvidenceSource.ATOMIC_FACTS,
-                                score=avg_score,
-                                details={
-                                    "conflict_count": len(comparison.conflicts),
-                                    "conflicts": [
-                                        {
-                                            "fact1": c.fact1.text,
-                                            "fact2": c.fact2.text,
-                                            "conflict_type": c.conflict_type,
-                                            "score": c.score,
-                                        }
-                                        for c in comparison.conflicts[:5]  # Limit details
-                                    ],
-                                },
-                            )
-                        )
-                        self.logger.debug(
-                            f"V2 Facts: {len(comparison.conflicts)} fact conflicts found"
-                        )
+                    )
+                    self.logger.debug(
+                        f"V2 Facts: {len(conflicts)} fact conflicts found"
+                    )
             except Exception as e:
                 self.logger.warning(f"V2 Fact extraction failed: {e}")
 
@@ -246,8 +242,8 @@ class ConflictDetector:
                 EvidenceItem(
                     source=EvidenceSource.KEYWORD,
                     score=text_result.confidence,
+                    description=text_result.description,
                     details={
-                        "description": text_result.description,
                         "indicators": text_result.get_structured_indicators()[:5],
                     },
                 )
@@ -262,7 +258,8 @@ class ConflictDetector:
                 EvidenceItem(
                     source=EvidenceSource.METADATA,
                     score=metadata_conf,
-                    details={"description": metadata_desc},
+                    description=metadata_desc,
+                    details={},
                 )
             )
 
