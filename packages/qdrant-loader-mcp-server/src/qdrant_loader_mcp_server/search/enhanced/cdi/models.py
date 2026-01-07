@@ -201,11 +201,27 @@ class ComplementaryContent:
 class ConflictAnalysis:
     """Represents analysis of conflicting information between documents."""
 
+    # Aggregate fields for multiple conflicts
     conflicting_pairs: list[tuple[str, str, dict[str, Any]]] = field(
         default_factory=list
     )  # (doc1, doc2, conflict_info)
     conflict_categories: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     resolution_suggestions: dict[str, str] = field(default_factory=dict)
+
+    # Individual conflict fields (when representing a single conflict)
+    document1_title: str = ""
+    document1_source: str = ""
+    document2_title: str = ""
+    document2_source: str = ""
+    conflict_type: str = ""
+    confidence_score: float = 0.0
+    vector_similarity: float = 0.0
+    analysis_method: str = ""
+    explanation: str = ""
+    detected_at: datetime | None = None
+
+    # Structured indicators with actual conflicting text snippets
+    structured_indicators: list[dict[str, Any]] = field(default_factory=list)
 
     def get_conflict_summary(self) -> dict[str, Any]:
         """Get summary of detected conflicts."""

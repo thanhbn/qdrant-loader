@@ -34,18 +34,21 @@ from .conflict_resolution import extract_context_snippet as _extract_context_sni
 from .conflict_resolution import (
     generate_resolution_suggestions as _generate_resolution_suggestions_ext,
 )
+from .config import get_config
 from .conflict_scoring import (
     analyze_metadata_conflicts as _analyze_metadata_conflicts_ext,
 )
 from .conflict_scoring import analyze_text_conflicts as _analyze_text_conflicts_ext
 from .conflict_scoring import calculate_conflict_confidence as _calculate_confidence_ext
 from .conflict_scoring import categorize_conflict as _categorize_conflict_ext
+from .conflict_scoring import TextConflictResult
 from .legacy_adapters import LegacyConflictDetectorAdapter
 from .llm_validation import llm_analyze_conflicts as _llm_analyze_conflicts_ext
 from .llm_validation import (
     validate_conflict_with_llm as _validate_conflict_with_llm_ext,
 )
 from .models import ConflictAnalysis
+from .topic_filter import get_topic_filter
 
 logger = LoggingConfig.get_logger(__name__)
 
@@ -76,13 +79,10 @@ class ConflictDetector:
         self.logger = LoggingConfig.get_logger(__name__)
         self.preferred_vector_name = preferred_vector_name
 
-        # Vector similarity thresholds
-        self.MIN_VECTOR_SIMILARITY = (
-            0.6  # Minimum similarity to consider for conflict analysis
-        )
-        self.MAX_VECTOR_SIMILARITY = (
-            0.95  # Maximum similarity - too similar suggests same content
-        )
+        # Load vector similarity thresholds from centralized config
+        config = get_config()
+        self.MIN_VECTOR_SIMILARITY = config.min_vector_similarity
+        self.MAX_VECTOR_SIMILARITY = config.max_vector_similarity
 
         # LLM validation settings
         self.llm_enabled = qdrant_client is not None and openai_client is not None
@@ -107,12 +107,14 @@ class ConflictDetector:
 
     def _analyze_text_conflicts(
         self, doc1: SearchResult, doc2: SearchResult
-    ) -> tuple[bool, str, float]:
+    ) -> TextConflictResult:
+        """Analyze text conflicts and return structured result with indicators."""
         return _analyze_text_conflicts_ext(self, doc1, doc2)
 
     def _analyze_metadata_conflicts(
         self, doc1: SearchResult, doc2: SearchResult
-    ) -> tuple[bool, str, float]:
+    ) -> tuple[bool, str, float, list[dict]]:
+        """Analyze metadata conflicts and return result with indicators."""
         return _analyze_metadata_conflicts_ext(self, doc1, doc2)
 
     async def detect_conflicts(self, documents: list[SearchResult]) -> ConflictAnalysis:
@@ -132,6 +134,24 @@ class ConflictDetector:
             ]
             embeddings = await self._get_document_embeddings(document_ids)
 
+            # Topic pre-filtering: only compare documents with similar topics
+            # This reduces false positives from unrelated documents (e.g., coffee vs auth)
+            config = get_config()
+            pairs_to_analyze: set[tuple[int, int]] | None = None
+            if config.use_topic_filter:
+                topic_filter = get_topic_filter()
+                # Define text extractor for SearchResult documents
+                def extract_text(doc: SearchResult) -> str:
+                    return doc.text if doc.text else ""
+
+                filtered_pairs = topic_filter.filter_document_pairs(
+                    documents, text_extractor=extract_text
+                )
+                pairs_to_analyze = set(filtered_pairs)
+                self.logger.debug(
+                    f"Topic filter reduced pairs from {len(documents) * (len(documents) - 1) // 2} to {len(pairs_to_analyze)}"
+                )
+
             def analyze_pair(
                 doc1: SearchResult, doc2: SearchResult, doc1_id: str, doc2_id: str
             ) -> ConflictAnalysis | None:
@@ -146,18 +166,24 @@ class ConflictDetector:
                     ):
                         return None
 
-                text_conflict, text_explanation, text_confidence = (
-                    self._analyze_text_conflicts(doc1, doc2)
-                )
-                metadata_conflict, metadata_explanation, metadata_confidence = (
+                # Get enhanced text conflict result with indicators
+                text_result = self._analyze_text_conflicts(doc1, doc2)
+                text_conflict = text_result.has_conflict
+                text_explanation = text_result.description
+                text_confidence = text_result.confidence
+                text_indicators = text_result.get_structured_indicators()
+
+                # Get metadata conflict result with indicators
+                metadata_conflict, metadata_explanation, metadata_confidence, metadata_indicators = (
                     self._analyze_metadata_conflicts(doc1, doc2)
                 )
 
                 llm_conflict = False
                 llm_explanation = ""
                 llm_confidence = 0.0
+                config = get_config()
                 if self.llm_enabled and (
-                    text_conflict or metadata_conflict or vector_similarity > 0.7
+                    text_conflict or metadata_conflict or vector_similarity > config.llm_validation_threshold
                 ):
                     # Inlined await is not possible in nested def; handled outside
                     pass
@@ -168,21 +194,33 @@ class ConflictDetector:
                 combined_confidence = max(
                     text_confidence, metadata_confidence, llm_confidence
                 )
+
+                # Combine all indicators
+                all_indicators = text_indicators + [
+                    ind.to_dict() if hasattr(ind, "to_dict") else ind
+                    for ind in metadata_indicators
+                ]
+
                 return ConflictAnalysis(
                     document1_title=doc1.source_title,
                     document1_source=doc1.source_type,
                     document2_title=doc2.source_title,
                     document2_source=doc2.source_type,
-                    conflict_type="content_conflict",
+                    conflict_type="text_conflict" if text_conflict else "metadata_conflict",
                     confidence_score=combined_confidence,
                     vector_similarity=vector_similarity,
                     analysis_method="multi_method",
                     explanation=f"Text: {text_explanation}; Metadata: {metadata_explanation}; LLM: {llm_explanation}",
                     detected_at=datetime.now(),
+                    structured_indicators=all_indicators,
                 )
 
             for i, doc1 in enumerate(documents):
                 for j, doc2 in enumerate(documents[i + 1 :], i + 1):
+                    # Skip pairs filtered out by topic filter
+                    if pairs_to_analyze is not None and (i, j) not in pairs_to_analyze:
+                        continue
+
                     doc1_id = document_ids[i]
                     doc2_id = document_ids[j]
 
@@ -197,7 +235,8 @@ class ConflictDetector:
                             vector_similarity = self._calculate_vector_similarity(
                                 embeddings[doc1_id], embeddings[doc2_id]
                             )
-                        if self.llm_enabled and vector_similarity > 0.7:
+                        config = get_config()
+                        if self.llm_enabled and vector_similarity > config.llm_validation_threshold:
                             llm_conflict, llm_explanation, llm_confidence = (
                                 await self._validate_conflict_with_llm(
                                     doc1, doc2, vector_similarity
@@ -231,7 +270,8 @@ class ConflictDetector:
                             vector_similarity = self._calculate_vector_similarity(
                                 embeddings[doc1_id], embeddings[doc2_id]
                             )
-                        if vector_similarity > 0.7:
+                        config = get_config()
+                        if vector_similarity > config.llm_validation_threshold:
                             llm_conflict, llm_explanation, llm_confidence = (
                                 await self._validate_conflict_with_llm(
                                     doc1, doc2, vector_similarity
@@ -266,7 +306,27 @@ class ConflictDetector:
             for conflict in conflicts:
                 # Preferred: ConflictAnalysis objects
                 if isinstance(conflict, ConflictAnalysis):
-                    if getattr(conflict, "conflicting_pairs", None):
+                    # Check if this is an individual conflict (has document titles)
+                    if conflict.document1_title or conflict.document2_title:
+                        # Build conflict_info dict from individual fields
+                        doc1_id = f"{conflict.document1_source}:{conflict.document1_title}"
+                        doc2_id = f"{conflict.document2_source}:{conflict.document2_title}"
+                        conflict_info = {
+                            "type": conflict.conflict_type,
+                            "confidence": conflict.confidence_score,
+                            "description": conflict.explanation,
+                            "vector_similarity": conflict.vector_similarity,
+                            "analysis_method": conflict.analysis_method,
+                            "structured_indicators": conflict.structured_indicators,
+                        }
+                        merged_conflicting_pairs.append(
+                            (doc1_id, doc2_id, conflict_info)
+                        )
+                        merged_conflict_categories[conflict.conflict_type].append(
+                            (doc1_id, doc2_id)
+                        )
+                    # Also handle aggregate conflicting_pairs if present
+                    elif getattr(conflict, "conflicting_pairs", None):
                         merged_conflicting_pairs.extend(conflict.conflicting_pairs)
                     if getattr(conflict, "conflict_categories", None):
                         for category, pairs in conflict.conflict_categories.items():
@@ -407,38 +467,23 @@ class ConflictDetector:
             return False
 
         # Use intersection over minimum set size for better sensitivity
+        config = get_config()
         overlap_ratio = len(intersection) / min_tokens
-        return overlap_ratio > 0.2  # 20% overlap threshold (more sensitive)
+        return overlap_ratio > config.content_overlap_threshold
 
     def _have_semantic_similarity(self, doc1: SearchResult, doc2: SearchResult) -> bool:
         """Check if two documents have semantic similarity (compatibility method)."""
         try:
+            config = get_config()
+
             # Get tokens for analysis
             tokens1 = set(doc1.text.lower().split())
             tokens2 = set(doc2.text.lower().split())
 
             # EXPLICIT checks for very different topics FIRST
-            food_words = {
-                "coffee",
-                "brewing",
-                "recipe",
-                "cooking",
-                "food",
-                "drink",
-                "beverage",
-                "taste",
-                "techniques",
-            }
-            tech_words = {
-                "authentication",
-                "security",
-                "login",
-                "access",
-                "user",
-                "secure",
-                "auth",
-                "password",
-            }
+            # Use config for domain word lists
+            food_words = set(config.food_domain_words)
+            tech_words = set(config.tech_domain_words)
 
             doc1_is_food = bool(tokens1 & food_words)
             doc1_is_tech = bool(tokens1 & tech_words)
@@ -457,20 +502,11 @@ class ConflictDetector:
                 doc2_processed = self.spacy_analyzer.nlp(doc2.text[:500])
 
                 similarity = doc1_processed.similarity(doc2_processed)
-                if similarity > 0.5:  # Lower threshold for better sensitivity
+                if similarity > config.semantic_similarity_threshold:
                     return True
 
             # Look for semantic concept overlap (common important words)
-            semantic_keywords = {
-                "authentication",
-                "login",
-                "security",
-                "access",
-                "user",
-                "secure",
-                "auth",
-                "method",
-            }
+            semantic_keywords = set(config.tech_domain_words)  # Use tech words as semantic concepts
             concept1 = tokens1 & semantic_keywords
             concept2 = tokens2 & semantic_keywords
 
@@ -479,7 +515,7 @@ class ConflictDetector:
                 concept_overlap = len(concept1 & concept2) / max(
                     len(concept1), len(concept2)
                 )
-                if concept_overlap > 0.5:  # 50% concept overlap
+                if concept_overlap > config.concept_overlap_threshold:
                     return True
 
             # Final fallback: use content overlap with strict threshold
@@ -487,7 +523,7 @@ class ConflictDetector:
             min_tokens = min(len(tokens1), len(tokens2))
             if min_tokens > 0:
                 overlap_ratio = len(tokens_intersection) / min_tokens
-                return overlap_ratio > 0.5  # Very high threshold
+                return overlap_ratio > config.concept_overlap_threshold  # Use same threshold
 
             return False
 
