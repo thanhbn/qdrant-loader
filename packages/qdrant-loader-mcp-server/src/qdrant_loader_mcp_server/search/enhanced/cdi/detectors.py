@@ -50,6 +50,17 @@ from .llm_validation import (
 from .models import ConflictAnalysis
 from .topic_filter import get_topic_filter
 
+# V2 CDI modules for semantic analysis
+from .nli_detector import get_nli_detector, NLILabel
+from .atomic_facts import get_fact_extractor, FactComparator
+from .aggregator import (
+    EvidenceAggregator,
+    EvidenceItem,
+    EvidenceSource,
+    EvidenceWeights,
+    ConflictSeverity,
+)
+
 logger = LoggingConfig.get_logger(__name__)
 
 
@@ -90,6 +101,13 @@ class ConflictDetector:
         # Link back to engine for provider access if set upstream
         self.engine: Any | None = None
 
+        # V2 CDI components - initialized lazily when needed
+        self._nli_detector = None
+        self._fact_extractor = None
+        self._fact_comparator = None
+        self._evidence_aggregator = None
+        self._v2_initialized = False
+
     async def _get_document_embeddings(
         self, document_ids: list[str]
     ) -> dict[str, list[float]]:
@@ -117,6 +135,155 @@ class ConflictDetector:
         """Analyze metadata conflicts and return result with indicators."""
         return _analyze_metadata_conflicts_ext(self, doc1, doc2)
 
+    def _init_v2_components(self):
+        """Initialize v2 CDI components lazily."""
+        if self._v2_initialized:
+            return
+
+        config = get_config()
+        if not config.enable_v2_detection:
+            return
+
+        try:
+            if config.use_nli_model:
+                self._nli_detector = get_nli_detector()
+                self.logger.debug("V2: NLI detector initialized")
+
+            if config.use_atomic_facts:
+                self._fact_extractor = get_fact_extractor()
+                self._fact_comparator = FactComparator()
+                self.logger.debug("V2: Fact extractor and comparator initialized")
+
+            # Initialize evidence aggregator
+            self._evidence_aggregator = EvidenceAggregator()
+            self.logger.debug("V2: Evidence aggregator initialized")
+
+            self._v2_initialized = True
+            self.logger.info("V2 CDI components initialized successfully")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize V2 components: {e}")
+            # Fallback to v1 behavior
+            config.enable_v2_detection = False
+
+    def _detect_v2_conflict(
+        self, doc1: SearchResult, doc2: SearchResult
+    ) -> tuple[bool, float, str, str]:
+        """Detect conflict using v2 NLI-based semantic analysis.
+
+        Returns:
+            Tuple of (has_conflict, confidence, severity, explanation)
+        """
+        config = get_config()
+        text1 = doc1.text if doc1.text else ""
+        text2 = doc2.text if doc2.text else ""
+
+        evidence_items: list[EvidenceItem] = []
+
+        # 1. NLI-based contradiction detection
+        if self._nli_detector and config.use_nli_model:
+            try:
+                nli_result = self._nli_detector.detect_contradiction(text1, text2)
+                if nli_result.label == NLILabel.CONTRADICTION:
+                    evidence_items.append(
+                        EvidenceItem(
+                            source=EvidenceSource.NLI,
+                            score=nli_result.contradiction_score,
+                            details={
+                                "label": nli_result.label.value,
+                                "contradiction_score": nli_result.contradiction_score,
+                                "entailment_score": nli_result.entailment_score,
+                            },
+                        )
+                    )
+                    self.logger.debug(
+                        f"V2 NLI: Contradiction detected (score={nli_result.contradiction_score:.2f})"
+                    )
+            except Exception as e:
+                self.logger.warning(f"V2 NLI detection failed: {e}")
+
+        # 2. Atomic fact extraction and comparison
+        if self._fact_extractor and self._fact_comparator and config.use_atomic_facts:
+            try:
+                facts1 = self._fact_extractor.extract(text1)
+                facts2 = self._fact_extractor.extract(text2)
+
+                if facts1.facts and facts2.facts:
+                    comparison = self._fact_comparator.compare(facts1.facts, facts2.facts)
+                    if comparison.conflicts:
+                        # Average conflict scores
+                        avg_score = sum(c.score for c in comparison.conflicts) / len(
+                            comparison.conflicts
+                        )
+                        evidence_items.append(
+                            EvidenceItem(
+                                source=EvidenceSource.ATOMIC_FACTS,
+                                score=avg_score,
+                                details={
+                                    "conflict_count": len(comparison.conflicts),
+                                    "conflicts": [
+                                        {
+                                            "fact1": c.fact1.text,
+                                            "fact2": c.fact2.text,
+                                            "conflict_type": c.conflict_type,
+                                            "score": c.score,
+                                        }
+                                        for c in comparison.conflicts[:5]  # Limit details
+                                    ],
+                                },
+                            )
+                        )
+                        self.logger.debug(
+                            f"V2 Facts: {len(comparison.conflicts)} fact conflicts found"
+                        )
+            except Exception as e:
+                self.logger.warning(f"V2 Fact extraction failed: {e}")
+
+        # 3. Legacy keyword-based detection (always included for comparison)
+        text_result = self._analyze_text_conflicts(doc1, doc2)
+        if text_result.has_conflict:
+            evidence_items.append(
+                EvidenceItem(
+                    source=EvidenceSource.KEYWORD,
+                    score=text_result.confidence,
+                    details={
+                        "description": text_result.description,
+                        "indicators": text_result.get_structured_indicators()[:5],
+                    },
+                )
+            )
+
+        # 4. Metadata conflicts
+        metadata_conflict, metadata_desc, metadata_conf, _ = self._analyze_metadata_conflicts(
+            doc1, doc2
+        )
+        if metadata_conflict:
+            evidence_items.append(
+                EvidenceItem(
+                    source=EvidenceSource.METADATA,
+                    score=metadata_conf,
+                    details={"description": metadata_desc},
+                )
+            )
+
+        # Aggregate all evidence
+        if not evidence_items:
+            return False, 0.0, "INFO", "No conflict detected"
+
+        if self._evidence_aggregator:
+            result = self._evidence_aggregator.aggregate(evidence_items)
+            return (
+                result.has_conflict,
+                result.confidence,
+                result.severity.value,
+                result.explanation,
+            )
+
+        # Fallback: simple max confidence
+        max_score = max(e.score for e in evidence_items)
+        has_conflict = max_score >= config.nli_contradiction_threshold
+        return has_conflict, max_score, "MEDIUM", "Conflict detected via evidence aggregation"
+
     async def detect_conflicts(self, documents: list[SearchResult]) -> ConflictAnalysis:
         """Detect conflicts between documents using multiple analysis methods."""
         start_time = time.time()
@@ -125,6 +292,12 @@ class ConflictDetector:
         if len(documents) < 2:
             self.logger.debug("Need at least 2 documents for conflict detection")
             return ConflictAnalysis()
+
+        # Initialize v2 components if enabled
+        config = get_config()
+        if config.enable_v2_detection:
+            self._init_v2_components()
+            self.logger.info("V2 conflict detection enabled")
 
         try:
             # Precompute embeddings once
@@ -166,6 +339,37 @@ class ConflictDetector:
                     ):
                         return None
 
+                config = get_config()
+
+                # V2 Detection: Use NLI + atomic facts + evidence aggregation
+                if config.enable_v2_detection and self._v2_initialized:
+                    has_conflict, confidence, severity, explanation = self._detect_v2_conflict(
+                        doc1, doc2
+                    )
+                    if not has_conflict:
+                        return None
+
+                    return ConflictAnalysis(
+                        document1_title=doc1.source_title,
+                        document1_source=doc1.source_type,
+                        document2_title=doc2.source_title,
+                        document2_source=doc2.source_type,
+                        conflict_type=f"v2_{severity.lower()}_conflict",
+                        confidence_score=confidence,
+                        vector_similarity=vector_similarity,
+                        analysis_method="v2_semantic_analysis",
+                        explanation=explanation,
+                        detected_at=datetime.now(),
+                        structured_indicators=[
+                            {
+                                "type": "v2_detection",
+                                "severity": severity,
+                                "confidence": confidence,
+                            }
+                        ],
+                    )
+
+                # V1 Detection: Legacy keyword-based analysis
                 # Get enhanced text conflict result with indicators
                 text_result = self._analyze_text_conflicts(doc1, doc2)
                 text_conflict = text_result.has_conflict
@@ -181,7 +385,6 @@ class ConflictDetector:
                 llm_conflict = False
                 llm_explanation = ""
                 llm_confidence = 0.0
-                config = get_config()
                 if self.llm_enabled and (
                     text_conflict or metadata_conflict or vector_similarity > config.llm_validation_threshold
                 ):
@@ -209,7 +412,7 @@ class ConflictDetector:
                     conflict_type="text_conflict" if text_conflict else "metadata_conflict",
                     confidence_score=combined_confidence,
                     vector_similarity=vector_similarity,
-                    analysis_method="multi_method",
+                    analysis_method="v1_keyword_analysis",
                     explanation=f"Text: {text_explanation}; Metadata: {metadata_explanation}; LLM: {llm_explanation}",
                     detected_at=datetime.now(),
                     structured_indicators=all_indicators,

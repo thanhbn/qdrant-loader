@@ -39,10 +39,13 @@ class EvidenceSource(Enum):
 
     TOPIC_FILTER = "topic_filter"
     NLI_DETECTION = "nli_detection"
+    NLI = "nli"  # Alias for NLI-based detection
     ATOMIC_FACTS = "atomic_facts"
     KEYWORD_MATCH = "keyword_match"
+    KEYWORD = "keyword"  # Alias for keyword-based detection
     NUMERIC_MISMATCH = "numeric_mismatch"
     NEGATION_MISMATCH = "negation_mismatch"
+    METADATA = "metadata"  # Metadata-based conflicts
     LEGACY = "legacy"
 
 
