@@ -52,7 +52,10 @@ class ConflictDetectionConfig:
     contradiction_confidence: float = 0.75  # Confidence for contradictory statements
 
     # From conflict_scoring.py:79
-    content_difference_confidence: float = 0.6  # Confidence for content differences
+    # DOWNWEIGHTED from 0.6 to 0.3 per Internal Audit (2026-01-08)
+    # Rationale: "content difference" ≠ "contradiction" (ContraDoc, AFEV papers)
+    # Keyword-based detection lacks semantic understanding; rely on NLI instead
+    content_difference_confidence: float = 0.3  # Confidence for content differences
 
     # ====================
     # NLI Thresholds (NEW for v2.0)
@@ -98,10 +101,12 @@ class ConflictDetectionConfig:
     # ====================
     # Feature Flags (v2.0)
     # ====================
-    use_nli_model: bool = False  # Enable NLI-based detection (set True when ready)
-    use_atomic_facts: bool = False  # Enable fact extraction (set True when ready)
-    use_topic_filter: bool = False  # Enable topic pre-filtering (set True when ready)
-    enable_v2_detection: bool = False  # Master switch for v2 features
+    # ENABLED per Internal Audit (2026-01-08): V2 is research-backed (ContraDoc, AFEV)
+    # V1 keyword-based detection produces false positives; V2 uses NLI + atomic facts
+    use_nli_model: bool = True  # Enable NLI-based detection
+    use_atomic_facts: bool = True  # Enable fact extraction
+    use_topic_filter: bool = True  # Enable topic pre-filtering
+    enable_v2_detection: bool = True  # Master switch for v2 features
 
     # ====================
     # Conflict Indicator Words

@@ -62,8 +62,23 @@ class NLIResult:
 
     @property
     def is_contradiction(self) -> bool:
-        """Check if this is a contradiction based on config threshold."""
+        """Check if this is a contradiction based on config threshold.
+
+        Per AFEV/ContraDoc research: If entailment score exceeds threshold,
+        the texts are semantically compatible (one supports/agrees with the other),
+        so they should NOT be considered contradictory even if contradiction
+        score is moderately high.
+
+        Entailment filtering prevents false positives where texts discuss
+        the same topic with compatible (not conflicting) information.
+        """
         config = get_config()
+
+        # ENTAILMENT FILTERING (per Internal Audit 2026-01-08)
+        # If texts show high entailment, they are compatible, not conflicting
+        if self.entailment_score >= config.nli_entailment_threshold:
+            return False
+
         return self.contradiction_score >= config.nli_contradiction_threshold
 
     @property
@@ -71,6 +86,19 @@ class NLIResult:
         """Check if this is an entailment based on config threshold."""
         config = get_config()
         return self.entailment_score >= config.nli_entailment_threshold
+
+    @property
+    def is_compatible(self) -> bool:
+        """Check if texts are semantically compatible (not conflicting).
+
+        Returns True if:
+        - Entailment score is high (one text supports/agrees with the other)
+        - Or contradiction score is low (texts don't contradict)
+
+        This is the inverse of is_contradiction but provides a clearer
+        semantic meaning for conflict detection pipelines.
+        """
+        return not self.is_contradiction
 
     @property
     def confidence(self) -> float:

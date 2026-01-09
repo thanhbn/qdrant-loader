@@ -661,3 +661,125 @@ class TestNLIResultHashability:
 
         result_set = {result1, result2}
         assert len(result_set) == 2
+
+
+class TestEntailmentFiltering:
+    """Tests for entailment filtering (Internal Audit 2026-01-08).
+
+    Per AFEV/ContraDoc research: If entailment > threshold, texts are
+    semantically compatible and should NOT be flagged as contradictions.
+
+    This prevents false positives where texts discuss the same topic
+    with compatible (not conflicting) information.
+    """
+
+    def setup_method(self):
+        """Reset config before each test."""
+        reset_config()
+        reset_nli_detector()
+
+    def test_high_entailment_blocks_contradiction(self):
+        """Test that high entailment prevents contradiction classification.
+
+        Even if contradiction_score >= threshold, high entailment should
+        block is_contradiction from returning True.
+        """
+        # Scenario: contradiction=0.85 (above 0.8 threshold) but entailment=0.75 (above 0.7 threshold)
+        result = NLIResult(
+            premise="MFA provides additional security through app codes.",
+            hypothesis="Two-factor authentication uses app-based codes.",
+            label=NLILabel.CONTRADICTION,  # Based on max score
+            contradiction_score=0.85,
+            entailment_score=0.75,
+            neutral_score=0.0,
+        )
+
+        # Even though contradiction_score > 0.8, entailment blocks it
+        assert result.is_entailment is True
+        assert result.is_contradiction is False  # KEY TEST: Entailment filtering works
+
+    def test_low_entailment_allows_contradiction(self):
+        """Test that low entailment allows contradiction classification."""
+        result = NLIResult(
+            premise="The sky is blue.",
+            hypothesis="The sky is red.",
+            label=NLILabel.CONTRADICTION,
+            contradiction_score=0.9,
+            entailment_score=0.05,  # Well below 0.7 threshold
+            neutral_score=0.05,
+        )
+
+        assert result.is_entailment is False
+        assert result.is_contradiction is True
+
+    def test_is_compatible_for_entailment(self):
+        """Test is_compatible property returns True for entailment."""
+        result = NLIResult(
+            premise="Backup codes are for account recovery.",
+            hypothesis="Use backup codes when you can't access MFA.",
+            label=NLILabel.ENTAILMENT,
+            contradiction_score=0.1,
+            entailment_score=0.8,
+            neutral_score=0.1,
+        )
+
+        assert result.is_compatible is True
+        assert result.is_contradiction is False
+
+    def test_is_compatible_for_neutral(self):
+        """Test is_compatible property returns True for neutral."""
+        result = NLIResult(
+            premise="Coffee is best brewed at 95°C.",
+            hypothesis="User authentication requires a password.",
+            label=NLILabel.NEUTRAL,
+            contradiction_score=0.1,
+            entailment_score=0.1,
+            neutral_score=0.8,
+        )
+
+        assert result.is_compatible is True
+        assert result.is_contradiction is False
+
+    def test_is_compatible_false_for_contradiction(self):
+        """Test is_compatible property returns False for contradiction."""
+        result = NLIResult(
+            premise="Always use HTTPS for authentication.",
+            hypothesis="HTTP is sufficient for login pages.",
+            label=NLILabel.CONTRADICTION,
+            contradiction_score=0.9,
+            entailment_score=0.05,
+            neutral_score=0.05,
+        )
+
+        assert result.is_compatible is False
+        assert result.is_contradiction is True
+
+    def test_backup_codes_vs_mfa_not_conflict(self):
+        """Test case from Internal Audit: Backup Codes vs MFA should NOT conflict.
+
+        This is the specific false positive case that triggered the fix:
+        - Doc 1: "## Related Articles - Backup Codes Management..."
+        - Doc 2: "## Related Articles - Setting Up MFA..."
+
+        These are DIFFERENT topics (backup codes vs MFA setup), not contradictions.
+        With NLI+entailment filtering, they should be classified as compatible.
+        """
+        # Simulating what NLI model would return for related-but-different topics
+        mock = MockNLIModel(
+            default_scores={
+                "contradiction": 0.3,  # Low - not contradicting
+                "entailment": 0.2,  # Low - not entailing either
+                "neutral": 0.5,  # Highest - different topics
+            }
+        )
+        detector = NLIDetector(model=mock)
+
+        result = detector.detect_contradiction(
+            "## Related Articles - Backup Codes Management - How to generate and use backup codes",
+            "## Related Articles - Setting Up MFA - Configure multi-factor authentication",
+        )
+
+        # Should be neutral (different topics), NOT contradiction
+        assert result.label == NLILabel.NEUTRAL
+        assert result.is_contradiction is False
+        assert result.is_compatible is True

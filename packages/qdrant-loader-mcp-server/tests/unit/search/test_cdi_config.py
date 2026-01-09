@@ -39,7 +39,9 @@ class TestConflictDetectionConfig:
         assert config.keyword_overlap_threshold == 0.3
         assert config.value_conflict_confidence == 0.85
         assert config.contradiction_confidence == 0.75
-        assert config.content_difference_confidence == 0.6
+        # DOWNWEIGHTED from 0.6 to 0.3 per Internal Audit (2026-01-08)
+        # Rationale: "content difference" ≠ "contradiction" (ContraDoc, AFEV papers)
+        assert config.content_difference_confidence == 0.3
 
         # NLI thresholds
         assert config.nli_model_name == "cross-encoder/nli-deberta-v3-small"
@@ -63,11 +65,12 @@ class TestConflictDetectionConfig:
         assert config.semantic_similarity_threshold == 0.5
         assert config.concept_overlap_threshold == 0.5
 
-        # Feature flags (v2.0) - should be False by default
-        assert config.use_nli_model is False
-        assert config.use_atomic_facts is False
-        assert config.use_topic_filter is False
-        assert config.enable_v2_detection is False
+        # Feature flags (v2.0) - ENABLED by default per Internal Audit (2026-01-08)
+        # Rationale: V2 is research-backed (ContraDoc, AFEV), V1 keyword-based is flawed
+        assert config.use_nli_model is True
+        assert config.use_atomic_facts is True
+        assert config.use_topic_filter is True
+        assert config.enable_v2_detection is True
 
     def test_conflict_indicator_words_default(self):
         """Test default conflict indicator words list."""
@@ -168,11 +171,9 @@ class TestConflictDetectionConfig:
         """Test enable_v2_features enables all v2 flags."""
         config = ConflictDetectionConfig()
 
-        # Initially all False
+        # First rollback to v1 to test enable
+        config.rollback_to_v1()
         assert config.use_nli_model is False
-        assert config.use_atomic_facts is False
-        assert config.use_topic_filter is False
-        assert config.enable_v2_detection is False
 
         # Enable v2
         config.enable_v2_features()
@@ -186,9 +187,8 @@ class TestConflictDetectionConfig:
     def test_rollback_to_v1(self):
         """Test rollback_to_v1 disables all v2 flags."""
         config = ConflictDetectionConfig()
-        config.enable_v2_features()
 
-        # All True now
+        # All True by default (v2 enabled)
         assert config.enable_v2_detection is True
 
         # Rollback
@@ -290,11 +290,12 @@ class TestConfigSingleton:
     def test_modifications_persist_in_singleton(self):
         """Test that modifications to singleton persist."""
         config1 = get_config()
-        config1.enable_v2_features()
+        # V2 is enabled by default, so test rollback persistence
+        config1.rollback_to_v1()
 
         config2 = get_config()
-        assert config2.use_nli_model is True
-        assert config2.enable_v2_detection is True
+        assert config2.use_nli_model is False
+        assert config2.enable_v2_detection is False
 
 
 class TestConfigIntegration:

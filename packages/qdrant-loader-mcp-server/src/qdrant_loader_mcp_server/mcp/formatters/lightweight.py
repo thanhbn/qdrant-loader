@@ -112,18 +112,62 @@ class LightweightResultFormatters:
 
         # Process conflicts format (dicts)
         for conflict in conflict_list:
-            processed_conflicts.append(
-                {
-                    "conflict_type": conflict.get("conflict_type", "unknown"),
-                    "conflict_score": conflict.get(
-                        "confidence", conflict.get("severity_score", 0.0)
-                    ),
-                    "conflict_description": conflict.get("description", ""),
-                    "conflicting_statements": FormatterUtils.extract_conflicting_statements(
-                        conflict
-                    ),
-                }
-            )
+            # Construct document IDs from source:title format
+            doc1_title = conflict.get("document1_title", "")
+            doc1_source = conflict.get("document1_source", "")
+            doc2_title = conflict.get("document2_title", "")
+            doc2_source = conflict.get("document2_source", "")
+            doc1_id = f"{doc1_source}:{doc1_title}" if doc1_source and doc1_title else ""
+            doc2_id = f"{doc2_source}:{doc2_title}" if doc2_source and doc2_title else ""
+
+            conflict_item = {
+                # Backward compatible fields
+                "conflict_type": conflict.get("conflict_type", "unknown"),
+                "conflict_score": conflict.get(
+                    "confidence", conflict.get("severity_score", 0.0)
+                ),
+                "conflict_description": conflict.get("description", ""),
+                "conflicting_statements": FormatterUtils.extract_conflicting_statements(
+                    conflict
+                ),
+                # Document IDs (new - for quick reference)
+                "document_1_id": doc1_id,
+                "document_2_id": doc2_id,
+                # Document info (new - detailed)
+                "document_info": {
+                    "document_1": {
+                        "id": doc1_id,
+                        "title": doc1_title,
+                        "source": doc1_source,
+                    },
+                    "document_2": {
+                        "id": doc2_id,
+                        "title": doc2_title,
+                        "source": doc2_source,
+                    },
+                },
+                # Analysis method info (new)
+                "analysis_method": conflict.get("analysis_method", "unknown"),
+                "vector_similarity": conflict.get("vector_similarity", 0.0),
+            }
+
+            # Add V2 detection summary if available
+            v2_summary = FormatterUtils.extract_v2_detection_summary(conflict)
+            if v2_summary:
+                conflict_item["v2_detection_info"] = v2_summary
+
+            processed_conflicts.append(conflict_item)
+
+        # Collect all evidence sources from V2 conflicts
+        all_evidence_sources: set[str] = set()
+        for conflict in processed_conflicts:
+            v2_info = conflict.get("v2_detection_info", {})
+            all_evidence_sources.update(v2_info.get("evidence_sources", []))
+
+        # Check if V2 detection was used
+        v2_detection_enabled = any(
+            c.get("conflict_type", "").startswith("v2_") for c in processed_conflicts
+        )
 
         return {
             "conflicts_detected": processed_conflicts[:5],  # Limit to top 5
@@ -138,6 +182,9 @@ class LightweightResultFormatters:
                 "conflict_types": list(
                     {c.get("conflict_type", "unknown") for c in processed_conflicts}
                 ),
+                # V2 summary fields (new)
+                "evidence_sources": list(all_evidence_sources),
+                "v2_detection_enabled": v2_detection_enabled,
             },
             "analysis_metadata": {
                 "query": query,
@@ -145,6 +192,8 @@ class LightweightResultFormatters:
                     "document_count", len(documents) if documents else 0
                 ),
                 "analysis_depth": "lightweight",
+                # V2 metadata (new)
+                "detection_version": "v2" if v2_detection_enabled else "v1",
             },
             "navigation": {
                 "total_found": len(processed_conflicts),
@@ -156,6 +205,8 @@ class LightweightResultFormatters:
             "conflicts": processed_conflicts[:5],
             "resolution_suggestions": conflicts.get("resolution_suggestions", []),
             "total_conflicts": len(processed_conflicts),
+            # Top-level V2 flag (new - for quick check)
+            "v2_detection_enabled": v2_detection_enabled,
         }
 
     @staticmethod

@@ -166,11 +166,11 @@ class ConflictDetector:
 
     def _detect_v2_conflict(
         self, doc1: SearchResult, doc2: SearchResult
-    ) -> tuple[bool, float, str, str]:
+    ) -> tuple[bool, float, str, str, list[EvidenceItem]]:
         """Detect conflict using v2 NLI-based semantic analysis.
 
         Returns:
-            Tuple of (has_conflict, confidence, severity, explanation)
+            Tuple of (has_conflict, confidence, severity, explanation, evidence_items)
         """
         config = get_config()
         text1 = doc1.text if doc1.text else ""
@@ -265,21 +265,104 @@ class ConflictDetector:
 
         # Aggregate all evidence
         if not evidence_items:
-            return False, 0.0, "INFO", "No conflict detected"
+            return False, 0.0, "INFO", "No conflict detected", []
 
         if self._evidence_aggregator:
-            result = self._evidence_aggregator.aggregate(evidence_items)
+            result = self._evidence_aggregator.aggregate(evidence_items, text1, text2)
+            # Build explanation from evidence descriptions
+            explanations = [e.description for e in result.evidence if e.description]
+            explanation = "; ".join(explanations) if explanations else "Evidence aggregated"
             return (
                 result.has_conflict,
                 result.confidence,
                 result.severity.value,
-                result.explanation,
+                explanation,
+                evidence_items,
             )
 
         # Fallback: simple max confidence
         max_score = max(e.score for e in evidence_items)
         has_conflict = max_score >= config.nli_contradiction_threshold
-        return has_conflict, max_score, "MEDIUM", "Conflict detected via evidence aggregation"
+        return has_conflict, max_score, "MEDIUM", "Conflict detected via evidence aggregation", evidence_items
+
+    def _build_v2_indicators(
+        self,
+        evidence_items: list[EvidenceItem],
+        doc1: SearchResult,
+        doc2: SearchResult,
+        severity: str,
+        confidence: float,
+    ) -> list[dict[str, Any]]:
+        """Build structured indicators with actual document snippets from v2 evidence.
+
+        Returns:
+            List of indicator dicts with doc1_snippet, doc2_snippet, context, etc.
+        """
+        indicators: list[dict[str, Any]] = []
+        text1 = doc1.text if doc1.text else ""
+        text2 = doc2.text if doc2.text else ""
+
+        for item in evidence_items:
+            if item.source.value in ("nli_detection", "nli"):
+                # NLI detection: use truncated document text as snippets
+                indicators.append({
+                    "doc1_snippet": text1[:300] + ("..." if len(text1) > 300 else ""),
+                    "doc2_snippet": text2[:300] + ("..." if len(text2) > 300 else ""),
+                    "context": f"NLI semantic contradiction (score={item.score:.2f})",
+                    "conflict_type": "semantic_contradiction",
+                    "confidence": item.score,
+                    "source": "nli_detection",
+                })
+
+            elif item.source.value == "atomic_facts":
+                # Atomic facts: use fact1/fact2 from conflicts as snippets
+                conflicts = item.details.get("conflicts", [])
+                for conflict in conflicts[:3]:  # Limit to top 3
+                    indicators.append({
+                        "doc1_snippet": conflict.get("fact1", ""),
+                        "doc2_snippet": conflict.get("fact2", ""),
+                        "context": f"Fact conflict: {conflict.get('conflict_type', 'unknown')}",
+                        "conflict_type": conflict.get("conflict_type", "fact_mismatch"),
+                        "confidence": conflict.get("confidence", item.score),
+                        "source": "atomic_facts",
+                    })
+
+            elif item.source.value in ("keyword_match", "keyword"):
+                # Keyword detection: already has structured indicators with snippets
+                keyword_indicators = item.details.get("indicators", [])
+                for ind in keyword_indicators:
+                    if isinstance(ind, dict):
+                        indicators.append({
+                            "doc1_snippet": ind.get("doc1_snippet", ""),
+                            "doc2_snippet": ind.get("doc2_snippet", ""),
+                            "context": ind.get("context", "Keyword-based conflict"),
+                            "conflict_type": ind.get("conflict_type", "keyword_match"),
+                            "confidence": ind.get("confidence", item.score),
+                            "source": "keyword_match",
+                        })
+
+            elif item.source.value == "metadata":
+                # Metadata conflicts: use description as context
+                indicators.append({
+                    "doc1_snippet": f"Source: {doc1.source_type}, Title: {doc1.source_title}",
+                    "doc2_snippet": f"Source: {doc2.source_type}, Title: {doc2.source_title}",
+                    "context": item.description,
+                    "conflict_type": "metadata_conflict",
+                    "confidence": item.score,
+                    "source": "metadata",
+                })
+
+        # Always include a summary indicator
+        if indicators:
+            indicators.insert(0, {
+                "type": "v2_detection_summary",
+                "severity": severity,
+                "confidence": confidence,
+                "evidence_sources": list(set(i.get("source", "unknown") for i in indicators)),
+                "total_indicators": len(indicators) - 1,  # Exclude this summary
+            })
+
+        return indicators
 
     async def detect_conflicts(self, documents: list[SearchResult]) -> ConflictAnalysis:
         """Detect conflicts between documents using multiple analysis methods."""
@@ -340,11 +423,16 @@ class ConflictDetector:
 
                 # V2 Detection: Use NLI + atomic facts + evidence aggregation
                 if config.enable_v2_detection and self._v2_initialized:
-                    has_conflict, confidence, severity, explanation = self._detect_v2_conflict(
-                        doc1, doc2
+                    has_conflict, confidence, severity, explanation, evidence_items = (
+                        self._detect_v2_conflict(doc1, doc2)
                     )
                     if not has_conflict:
                         return None
+
+                    # Build structured indicators with actual document snippets
+                    structured_indicators = self._build_v2_indicators(
+                        evidence_items, doc1, doc2, severity, confidence
+                    )
 
                     return ConflictAnalysis(
                         document1_title=doc1.source_title,
@@ -357,13 +445,7 @@ class ConflictDetector:
                         analysis_method="v2_semantic_analysis",
                         explanation=explanation,
                         detected_at=datetime.now(),
-                        structured_indicators=[
-                            {
-                                "type": "v2_detection",
-                                "severity": severity,
-                                "confidence": confidence,
-                            }
-                        ],
+                        structured_indicators=structured_indicators,
                     )
 
                 # V1 Detection: Legacy keyword-based analysis

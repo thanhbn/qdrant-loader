@@ -43,24 +43,34 @@ class FormatterUtils:
 
     @staticmethod
     def extract_conflicting_statements(conflict_info: dict) -> list[dict[str, Any]]:
-        """Extract conflicting statements from conflict information."""
+        """Extract conflicting statements from conflict information.
+
+        Returns statements with V2 detection metadata when available.
+        Maintains backward compatibility with existing response structure.
+        """
         statements = []
 
         # Extract from structured indicators
         structured_indicators = conflict_info.get("structured_indicators", [])
         for indicator in structured_indicators:
-            if (
-                isinstance(indicator, dict)
-                and "doc1_snippet" in indicator
-                and "doc2_snippet" in indicator
-            ):
-                statements.append(
-                    {
+            if isinstance(indicator, dict):
+                # Skip v2_detection_summary - it's metadata, not a statement
+                if indicator.get("type") == "v2_detection_summary":
+                    continue
+
+                # Extract statement with V2 metadata
+                if "doc1_snippet" in indicator and "doc2_snippet" in indicator:
+                    statement = {
+                        # Backward compatible fields
                         "document_1_statement": indicator["doc1_snippet"],
                         "document_2_statement": indicator["doc2_snippet"],
                         "context": indicator.get("context", ""),
+                        # V2 detection fields (new)
+                        "detection_source": indicator.get("source", "unknown"),
+                        "confidence": indicator.get("confidence", 0.0),
+                        "conflict_type": indicator.get("conflict_type", "unknown"),
                     }
-                )
+                    statements.append(statement)
 
         # Fallback to basic conflict description if no structured indicators
         if not statements and "description" in conflict_info:
@@ -69,10 +79,30 @@ class FormatterUtils:
                     "document_1_statement": conflict_info.get("description", ""),
                     "document_2_statement": "",
                     "context": "General conflict detected",
+                    "detection_source": "legacy",
+                    "confidence": conflict_info.get("confidence", 0.0),
+                    "conflict_type": conflict_info.get("conflict_type", "unknown"),
                 }
             )
 
         return statements
+
+    @staticmethod
+    def extract_v2_detection_summary(conflict_info: dict) -> dict[str, Any] | None:
+        """Extract V2 detection summary from structured indicators.
+
+        Returns the v2_detection_summary metadata if available.
+        """
+        structured_indicators = conflict_info.get("structured_indicators", [])
+        for indicator in structured_indicators:
+            if isinstance(indicator, dict) and indicator.get("type") == "v2_detection_summary":
+                return {
+                    "severity": indicator.get("severity", "unknown"),
+                    "confidence": indicator.get("confidence", 0.0),
+                    "evidence_sources": indicator.get("evidence_sources", []),
+                    "total_indicators": indicator.get("total_indicators", 0),
+                }
+        return None
 
     @staticmethod
     def generate_clean_group_name(group_key: str, results: list) -> str:

@@ -623,10 +623,56 @@ class FactComparator:
             self._nli_detector = get_nli_detector()
         return self._nli_detector
 
+    def _predicates_align(self, pred1: str | None, pred2: str | None) -> bool:
+        """Check if two predicates discuss the same property/aspect.
+
+        Per AFEV/ContraDoc research: Only compare claims that address
+        the same aspect of an entity. Different predicates = different aspects.
+
+        Args:
+            pred1: First predicate
+            pred2: Second predicate
+
+        Returns:
+            True if predicates are aligned (same or semantically similar)
+        """
+        if not pred1 or not pred2:
+            # If predicates can't be extracted, assume alignment
+            # (will fall through to NLI for semantic check)
+            return True
+
+        pred1_lower = pred1.lower().strip()
+        pred2_lower = pred2.lower().strip()
+
+        # Exact match
+        if pred1_lower == pred2_lower:
+            return True
+
+        # Semantic similarity: check word overlap
+        words1 = set(pred1_lower.split())
+        words2 = set(pred2_lower.split())
+
+        # Remove common verbs that don't carry meaning
+        stop_verbs = {"is", "are", "was", "were", "be", "been", "has", "have", "had"}
+        words1 -= stop_verbs
+        words2 -= stop_verbs
+
+        if not words1 or not words2:
+            return True  # Can't determine, assume aligned
+
+        # Require at least 50% word overlap for predicate alignment
+        overlap = len(words1 & words2)
+        min_len = min(len(words1), len(words2))
+        return overlap >= max(1, min_len * 0.5)
+
     def compare_facts(
         self, fact1: AtomicFact, fact2: AtomicFact
     ) -> dict[str, Any]:
         """Compare two facts for potential conflict.
+
+        Per AFEV/ContraDoc research: Only compare facts that address
+        the SAME subject AND SAME predicate/property. This prevents
+        false positives from comparing unrelated claims.
 
         Args:
             fact1: First fact
@@ -644,10 +690,22 @@ class FactComparator:
             "details": {},
         }
 
-        # Quick check: if both facts are about different subjects, no conflict
+        # CLAIM ALIGNMENT CHECK (per AFEV, ContraDoc research)
+        # Step 1: Subject alignment - facts must be about the SAME entity
         if fact1.subject and fact2.subject:
             if fact1.subject.lower() != fact2.subject.lower():
                 result["details"]["different_subjects"] = True
+                result["details"]["alignment_failed"] = "subject"
+                return result
+
+        # Step 2: Predicate alignment - facts must discuss the SAME property/aspect
+        # This is the key fix for false positives like "Backup Codes" vs "MFA Setup"
+        if fact1.predicate and fact2.predicate:
+            if not self._predicates_align(fact1.predicate, fact2.predicate):
+                result["details"]["different_predicates"] = True
+                result["details"]["alignment_failed"] = "predicate"
+                result["details"]["predicate1"] = fact1.predicate
+                result["details"]["predicate2"] = fact2.predicate
                 return result
 
         # Check for numeric conflicts

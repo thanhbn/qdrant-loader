@@ -110,6 +110,11 @@ class AggregatedResult:
     topic_info: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def has_conflict(self) -> bool:
+        """Alias for is_conflict for backward compatibility."""
+        return self.is_conflict
+
+    @property
     def evidence_count(self) -> int:
         """Get number of evidence items."""
         return len(self.evidence)
@@ -486,7 +491,7 @@ class EvidenceAggregator:
             return ConflictSeverity.HIGH
         return ConflictSeverity.CRITICAL
 
-    def aggregate(self, evidence_items: list[EvidenceItem]) -> AggregatedResult:
+    def aggregate(self, evidence_items: list[EvidenceItem], text1: str = "", text2: str = "") -> AggregatedResult:
         """Aggregate pre-collected evidence items into a result.
 
         This method is used when evidence has already been collected
@@ -494,17 +499,20 @@ class EvidenceAggregator:
 
         Args:
             evidence_items: List of pre-collected evidence items
+            text1: First document text (optional, for result context)
+            text2: Second document text (optional, for result context)
 
         Returns:
             AggregatedResult with aggregated confidence and severity
         """
         if not evidence_items:
             return AggregatedResult(
-                has_conflict=False,
+                text1=text1,
+                text2=text2,
+                is_conflict=False,
                 confidence=0.0,
                 severity=ConflictSeverity.NONE,
                 evidence=[],
-                explanation="No evidence collected",
             )
 
         # Calculate weighted confidence
@@ -519,22 +527,19 @@ class EvidenceAggregator:
         final_confidence = weighted_score / total_weight if total_weight > 0 else 0.0
 
         # Determine severity
-        severity = self._score_to_severity(final_confidence)
+        severity = self._determine_severity(final_confidence, len(evidence_items))
 
         # Determine if conflict exists
         config = get_config()
-        has_conflict = final_confidence >= config.nli_contradiction_threshold
-
-        # Build explanation
-        explanations = [item.description for item in evidence_items if item.description]
-        explanation = "; ".join(explanations) if explanations else "Evidence aggregated"
+        is_conflict = final_confidence >= config.nli_contradiction_threshold
 
         return AggregatedResult(
-            has_conflict=has_conflict,
+            text1=text1,
+            text2=text2,
+            is_conflict=is_conflict,
             confidence=final_confidence,
             severity=severity,
             evidence=evidence_items,
-            explanation=explanation,
         )
 
     def detect_conflicts_batch(

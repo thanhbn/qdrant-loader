@@ -90,6 +90,9 @@ class MCPFormatters:
     _extract_conflicting_statements = staticmethod(
         FormatterUtils.extract_conflicting_statements
     )
+    _extract_v2_detection_summary = staticmethod(
+        FormatterUtils.extract_v2_detection_summary
+    )
     _generate_clean_group_name = staticmethod(FormatterUtils.generate_clean_group_name)
     _get_group_key = staticmethod(FormatterUtils.get_group_key)
     _count_siblings = staticmethod(FormatterUtils.count_siblings)
