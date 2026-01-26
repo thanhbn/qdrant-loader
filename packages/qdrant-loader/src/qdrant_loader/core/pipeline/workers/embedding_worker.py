@@ -1,3 +1,12 @@
+# ============================================================
+# LEARNING: Embedding Worker - Batch Embedding Generator
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/pipeline/workers/embedding_worker.py
+# Learning Objectives:
+# - [ ] Hieu batch processing pattern: accumulate chunks -> process batch -> yield results
+# - [ ] Hieu memory management (GC) khi xu ly batches lon
+# - [ ] Hieu async generator pattern de stream (chunk, embedding) tuples
+# ============================================================
 """Embedding worker for processing chunks into embeddings."""
 
 import asyncio
@@ -43,36 +52,45 @@ class EmbeddingWorker(BaseWorker):
             return []
 
         try:
-            logger.debug(f"EmbeddingWorker processing batch of {len(chunks)} items")
-
-            # Monitor memory usage
-            memory_percent = psutil.virtual_memory().percent
-            if memory_percent > 85:
-                logger.warning(
-                    f"High memory usage detected: {memory_percent}%. Running garbage collection..."
-                )
-                gc.collect()
-
-            with prometheus_metrics.EMBEDDING_DURATION.time():
-                # Add timeout to prevent hanging and check for shutdown
-                embeddings = await asyncio.wait_for(
-                    self.embedding_service.get_embeddings([c.content for c in chunks]),
-                    timeout=300.0,  # Increased to 5 minute timeout for large batches
-                )
-
-                # Check for shutdown before returning
-                if self.shutdown_event.is_set():
-                    logger.debug("EmbeddingWorker skipping result due to shutdown")
-                    return []
-
-                result = list(zip(chunks, embeddings, strict=False))
-                logger.debug(f"EmbeddingWorker completed batch of {len(chunks)} items")
-
-                # Cleanup after large batches
-                if len(chunks) > 50:
-                    gc.collect()
-
-                return result
+            # TODO [L2]: Implement batch embedding with memory management
+            # Use Case: Tao embeddings cho 1 batch chunks, monitor memory, cleanup sau batch lon
+            # Data Flow: chunks -> extract content -> EmbeddingService.get_embeddings() -> zip(chunks, embeddings) -> result
+            # Business Rule: Neu memory > 85% thi force GC truoc khi process
+            #                Timeout 5 phut cho moi batch
+            #                Force GC sau batch > 50 chunks
+            # -----------------------------------------------------------
+            # logger.debug(f"EmbeddingWorker processing batch of {len(chunks)} items")
+            #
+            # # Monitor memory usage
+            # memory_percent = psutil.virtual_memory().percent
+            # if memory_percent > 85:
+            #     logger.warning(
+            #         f"High memory usage detected: {memory_percent}%. Running garbage collection..."
+            #     )
+            #     gc.collect()
+            #
+            # with prometheus_metrics.EMBEDDING_DURATION.time():
+            #     # Add timeout to prevent hanging and check for shutdown
+            #     embeddings = await asyncio.wait_for(
+            #         self.embedding_service.get_embeddings([c.content for c in chunks]),
+            #         timeout=300.0,  # Increased to 5 minute timeout for large batches
+            #     )
+            #
+            #     # Check for shutdown before returning
+            #     if self.shutdown_event.is_set():
+            #         logger.debug("EmbeddingWorker skipping result due to shutdown")
+            #         return []
+            #
+            #     result = list(zip(chunks, embeddings, strict=False))
+            #     logger.debug(f"EmbeddingWorker completed batch of {len(chunks)} items")
+            #
+            #     # Cleanup after large batches
+            #     if len(chunks) > 50:
+            #         gc.collect()
+            #
+            #     return result
+            # -----------------------------------------------------------
+            return []  # REMOVE THIS after uncommenting
 
         except TimeoutError:
             logger.error(
@@ -101,55 +119,65 @@ class EmbeddingWorker(BaseWorker):
         total_processed = 0
 
         try:
-            async for chunk in chunks:
-                if self.shutdown_event.is_set():
-                    logger.debug("EmbeddingWorker exiting due to shutdown")
-                    break
-
-                batch.append(chunk)
-
-                # Process batch when it reaches the desired size
-                if len(batch) >= batch_size:
-                    try:
-                        logger.debug(
-                            f"🔄 Processing embedding batch of {len(batch)} chunks..."
-                        )
-                        results = await self.process(batch)
-                        total_processed += len(batch)
-                        logger.info(
-                            f"🔗 Generated embeddings: {len(batch)} items in batch, {total_processed} total processed"
-                        )
-
-                        for result in results:
-                            yield result
-                    except Exception as e:
-                        logger.error(f"EmbeddingWorker batch processing failed: {e}")
-                        # Mark chunks as failed but continue processing
-                        for chunk in batch:
-                            logger.error(f"Embedding failed for chunk {chunk.id}: {e}")
-
-                    batch = []
-
-            # Process any remaining chunks in the final batch
-            if batch and not self.shutdown_event.is_set():
-                try:
-                    logger.debug(
-                        f"🔄 Processing final embedding batch of {len(batch)} chunks..."
-                    )
-                    results = await self.process(batch)
-                    total_processed += len(batch)
-                    logger.info(
-                        f"🔗 Generated embeddings: {len(batch)} items in final batch, {total_processed} total processed"
-                    )
-
-                    for result in results:
-                        yield result
-                except Exception as e:
-                    logger.error(f"EmbeddingWorker final batch processing failed: {e}")
-                    for chunk in batch:
-                        logger.error(f"Embedding failed for chunk {chunk.id}: {e}")
-
-            logger.info(f"✅ Embedding completed: {total_processed} chunks processed")
+            # TODO [L2]: Implement streaming batch accumulation pattern
+            # Use Case: Nhan chunks tu async iterator, gom thanh batches, process va yield results
+            # Data Flow: async chunks stream -> accumulate to batch_size -> process() -> yield (chunk, embedding)
+            #            -> process remaining final batch
+            # Business Rule: Khi batch dat batch_size -> process ngay, khong doi them
+            #                Cuoi cung xu ly "final batch" con lai (< batch_size)
+            #                Check shutdown_event giua moi iteration
+            # -----------------------------------------------------------
+            # async for chunk in chunks:
+            #     if self.shutdown_event.is_set():
+            #         logger.debug("EmbeddingWorker exiting due to shutdown")
+            #         break
+            #
+            #     batch.append(chunk)
+            #
+            #     # Process batch when it reaches the desired size
+            #     if len(batch) >= batch_size:
+            #         try:
+            #             logger.debug(
+            #                 f"🔄 Processing embedding batch of {len(batch)} chunks..."
+            #             )
+            #             results = await self.process(batch)
+            #             total_processed += len(batch)
+            #             logger.info(
+            #                 f"🔗 Generated embeddings: {len(batch)} items in batch, {total_processed} total processed"
+            #             )
+            #
+            #             for result in results:
+            #                 yield result
+            #         except Exception as e:
+            #             logger.error(f"EmbeddingWorker batch processing failed: {e}")
+            #             # Mark chunks as failed but continue processing
+            #             for chunk in batch:
+            #                 logger.error(f"Embedding failed for chunk {chunk.id}: {e}")
+            #
+            #         batch = []
+            #
+            # # Process any remaining chunks in the final batch
+            # if batch and not self.shutdown_event.is_set():
+            #     try:
+            #         logger.debug(
+            #             f"🔄 Processing final embedding batch of {len(batch)} chunks..."
+            #         )
+            #         results = await self.process(batch)
+            #         total_processed += len(batch)
+            #         logger.info(
+            #             f"🔗 Generated embeddings: {len(batch)} items in final batch, {total_processed} total processed"
+            #         )
+            #
+            #         for result in results:
+            #             yield result
+            #     except Exception as e:
+            #         logger.error(f"EmbeddingWorker final batch processing failed: {e}")
+            #         for chunk in batch:
+            #             logger.error(f"Embedding failed for chunk {chunk.id}: {e}")
+            #
+            # logger.info(f"✅ Embedding completed: {total_processed} chunks processed")
+            # -----------------------------------------------------------
+            pass  # REMOVE THIS after uncommenting
 
         except asyncio.CancelledError:
             logger.debug("EmbeddingWorker cancelled")

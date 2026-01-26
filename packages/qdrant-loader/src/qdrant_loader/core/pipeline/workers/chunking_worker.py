@@ -1,3 +1,13 @@
+# ============================================================
+# LEARNING: Chunking Worker - Async Document Chunking
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/pipeline/workers/chunking_worker.py
+# Learning Objectives:
+# - [ ] Hieu adaptive timeout calculation dua tren document size
+# - [ ] Hieu async concurrency control voi Semaphore
+# - [ ] Hieu cach stream chunks qua async generator
+# ============================================================
+
 """Chunking worker for processing documents into chunks."""
 
 import asyncio
@@ -44,49 +54,57 @@ class ChunkingWorker(BaseWorker):
         logger.debug(f"Chunker_worker started for doc {document.id}")
 
         try:
-            # Check for shutdown signal
-            if self.shutdown_event.is_set():
-                logger.debug(f"Chunker_worker {document.id} exiting due to shutdown")
-                return []
-
-            # Update metrics
-            prometheus_metrics.CPU_USAGE.set(psutil.cpu_percent())
-            prometheus_metrics.MEMORY_USAGE.set(psutil.virtual_memory().percent)
-
-            # Run chunking in a thread pool for true parallelism
-            with prometheus_metrics.CHUNKING_DURATION.time():
-                # Calculate adaptive timeout based on document size
-                adaptive_timeout = self._calculate_adaptive_timeout(document)
-
-                # Log timeout decision for debugging
-                logger.debug(
-                    f"Adaptive timeout for {document.url}: {adaptive_timeout:.1f}s "
-                    f"(size: {len(document.content)} bytes)"
-                )
-
-                # Add timeout to prevent hanging on chunking
-                chunks = await asyncio.wait_for(
-                    asyncio.get_running_loop().run_in_executor(
-                        self.chunk_executor,
-                        self.chunking_service.chunk_document,
-                        document,
-                    ),
-                    timeout=adaptive_timeout,
-                )
-
-                # Check for shutdown before returning chunks
-                if self.shutdown_event.is_set():
-                    logger.debug(
-                        f"Chunker_worker {document.id} exiting due to shutdown after chunking"
-                    )
-                    return []
-
-                # Add document reference to chunk for later state tracking
-                for chunk in chunks:
-                    chunk.metadata["parent_document"] = document
-
-                logger.debug(f"Chunked doc {document.id} into {len(chunks)} chunks")
-                return chunks
+            # TODO [L2]: Implement single document chunking with shutdown awareness
+            # Use Case: Chunk 1 document voi adaptive timeout, track metrics, handle shutdown
+            # Data Flow: document -> shutdown check -> metrics update -> thread pool chunking -> add parent ref -> return chunks
+            # Business Rule: Chay chunking trong thread pool (run_in_executor) de khong block event loop
+            #                Them parent_document reference vao metadata cua moi chunk
+            # -----------------------------------------------------------
+            # # Check for shutdown signal
+            # if self.shutdown_event.is_set():
+            #     logger.debug(f"Chunker_worker {document.id} exiting due to shutdown")
+            #     return []
+            #
+            # # Update metrics
+            # prometheus_metrics.CPU_USAGE.set(psutil.cpu_percent())
+            # prometheus_metrics.MEMORY_USAGE.set(psutil.virtual_memory().percent)
+            #
+            # # Run chunking in a thread pool for true parallelism
+            # with prometheus_metrics.CHUNKING_DURATION.time():
+            #     # Calculate adaptive timeout based on document size
+            #     adaptive_timeout = self._calculate_adaptive_timeout(document)
+            #
+            #     # Log timeout decision for debugging
+            #     logger.debug(
+            #         f"Adaptive timeout for {document.url}: {adaptive_timeout:.1f}s "
+            #         f"(size: {len(document.content)} bytes)"
+            #     )
+            #
+            #     # Add timeout to prevent hanging on chunking
+            #     chunks = await asyncio.wait_for(
+            #         asyncio.get_running_loop().run_in_executor(
+            #             self.chunk_executor,
+            #             self.chunking_service.chunk_document,
+            #             document,
+            #         ),
+            #         timeout=adaptive_timeout,
+            #     )
+            #
+            #     # Check for shutdown before returning chunks
+            #     if self.shutdown_event.is_set():
+            #         logger.debug(
+            #             f"Chunker_worker {document.id} exiting due to shutdown after chunking"
+            #         )
+            #         return []
+            #
+            #     # Add document reference to chunk for later state tracking
+            #     for chunk in chunks:
+            #         chunk.metadata["parent_document"] = document
+            #
+            #     logger.debug(f"Chunked doc {document.id} into {len(chunks)} chunks")
+            #     return chunks
+            # -----------------------------------------------------------
+            return []  # REMOVE THIS after uncommenting
 
         except asyncio.CancelledError:
             logger.debug(f"Chunker_worker {document.id} cancelled")
@@ -207,35 +225,45 @@ class ChunkingWorker(BaseWorker):
         Returns:
             Timeout in seconds
         """
-        doc_size = len(document.content)
-
-        # More generous base timeouts to reduce false positives
-        if doc_size < 1_000:  # Very small files (< 1KB)
-            base_timeout = 30.0  # Increased from 10.0
-        elif doc_size < 10_000:  # Small files (< 10KB)
-            base_timeout = 60.0  # Increased from 20.0
-        elif doc_size < 50_000:  # Medium files (10-50KB)
-            base_timeout = 120.0  # Increased from 60.0
-        elif doc_size < 100_000:  # Large files (50-100KB)
-            base_timeout = 240.0  # Increased from 120.0
-        else:  # Very large files (> 100KB)
-            base_timeout = 360.0  # Increased from 180.0
-
-        # Special handling for HTML files which can have complex structures
-        if document.content_type and document.content_type.lower() == "html":
-            base_timeout *= 1.5  # Give HTML files 50% more time
-
-        # Special handling for converted files which often have complex markdown
-        if hasattr(document, "metadata") and document.metadata.get("conversion_method"):
-            base_timeout *= 1.5  # Give converted files 50% more time
-
-        # Additional scaling factors
-        size_factor = min(doc_size / 50000, 4.0)  # Up to 4x for very large files
-
-        # Final adaptive timeout
-        adaptive_timeout = base_timeout * (1 + size_factor)
-
-        # Increased maximum timeout to handle complex documents
-        return min(
-            adaptive_timeout, 600.0
-        )  # 10 minute maximum (increased from 5 minutes)
+        # TODO [L1]: Implement adaptive timeout calculation
+        # Use Case: Documents co kich thuoc khac nhau can timeout khac nhau
+        #           File nho (< 1KB) can 30s, file lon (> 100KB) can 360s
+        #           HTML files va converted files can them 50% thoi gian
+        # Business Rule: base_timeout theo size tiers + multipliers cho HTML/converted
+        #                size_factor = min(doc_size/50000, 4.0) -> final = base * (1 + size_factor)
+        #                Maximum timeout: 600s (10 phut)
+        # -----------------------------------------------------------
+        # doc_size = len(document.content)
+        #
+        # # More generous base timeouts to reduce false positives
+        # if doc_size < 1_000:  # Very small files (< 1KB)
+        #     base_timeout = 30.0  # Increased from 10.0
+        # elif doc_size < 10_000:  # Small files (< 10KB)
+        #     base_timeout = 60.0  # Increased from 20.0
+        # elif doc_size < 50_000:  # Medium files (10-50KB)
+        #     base_timeout = 120.0  # Increased from 60.0
+        # elif doc_size < 100_000:  # Large files (50-100KB)
+        #     base_timeout = 240.0  # Increased from 120.0
+        # else:  # Very large files (> 100KB)
+        #     base_timeout = 360.0  # Increased from 180.0
+        #
+        # # Special handling for HTML files which can have complex structures
+        # if document.content_type and document.content_type.lower() == "html":
+        #     base_timeout *= 1.5  # Give HTML files 50% more time
+        #
+        # # Special handling for converted files which often have complex markdown
+        # if hasattr(document, "metadata") and document.metadata.get("conversion_method"):
+        #     base_timeout *= 1.5  # Give converted files 50% more time
+        #
+        # # Additional scaling factors
+        # size_factor = min(doc_size / 50000, 4.0)  # Up to 4x for very large files
+        #
+        # # Final adaptive timeout
+        # adaptive_timeout = base_timeout * (1 + size_factor)
+        #
+        # # Increased maximum timeout to handle complex documents
+        # return min(
+        #     adaptive_timeout, 600.0
+        # )  # 10 minute maximum (increased from 5 minutes)
+        # -----------------------------------------------------------
+        return 120.0  # REMOVE THIS after uncommenting (default fallback)

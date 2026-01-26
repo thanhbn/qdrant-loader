@@ -1,3 +1,13 @@
+# ============================================================
+# LEARNING: Document Model - Core Data Structure
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/document.py
+# Learning Objectives:
+# - [ ] Hieu cach generate document ID nhat quan tu source attributes
+# - [ ] Hieu cach calculate content hash de detect changes
+# - [ ] Hieu cach generate chunk ID cho Qdrant compatibility
+# ============================================================
+
 import hashlib
 import uuid
 from datetime import UTC, datetime
@@ -121,38 +131,47 @@ class Document(BaseModel):
         import json
         from typing import Any
 
-        def normalize_value(value: Any) -> Any:
-            """Normalize a value for consistent hashing."""
-            if value is None:
-                return "null"
-            if isinstance(value, str | int | float | bool):
-                return value
-            if isinstance(value, dict):
-                return {k: normalize_value(v) for k, v in sorted(value.items())}
-            if isinstance(value, list | tuple):
-                return [normalize_value(v) for v in value]
-            return str(value)
-
-        # Normalize all inputs
-        normalized_content = content.replace("\r\n", "\n")
-        normalized_title = title.replace("\r\n", "\n")
-        normalized_metadata = normalize_value(metadata)
-
-        # Create a consistent string representation
-        content_string = json.dumps(
-            {
-                "content": normalized_content,
-                "title": normalized_title,
-                "metadata": normalized_metadata,
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-
-        # Generate SHA-256 hash
-        content_hash = hashlib.sha256(content_string.encode("utf-8")).hexdigest()
-
-        return content_hash
+        # TODO [L1]: Implement content hash calculation cho change detection
+        # Use Case: So sanh content hash giua lan ingest hien tai va lan truoc
+        #           Neu hash thay doi -> document can re-process (re-chunk, re-embed)
+        # Business Rule: Normalize line endings (\r\n -> \n), sort dict keys,
+        #                handle nested types (dict/list/None) recursively
+        # Data Flow: content + title + metadata -> normalize -> JSON serialize -> SHA-256
+        # -----------------------------------------------------------
+        # def normalize_value(value: Any) -> Any:
+        #     """Normalize a value for consistent hashing."""
+        #     if value is None:
+        #         return "null"
+        #     if isinstance(value, str | int | float | bool):
+        #         return value
+        #     if isinstance(value, dict):
+        #         return {k: normalize_value(v) for k, v in sorted(value.items())}
+        #     if isinstance(value, list | tuple):
+        #         return [normalize_value(v) for v in value]
+        #     return str(value)
+        #
+        # # Normalize all inputs
+        # normalized_content = content.replace("\r\n", "\n")
+        # normalized_title = title.replace("\r\n", "\n")
+        # normalized_metadata = normalize_value(metadata)
+        #
+        # # Create a consistent string representation
+        # content_string = json.dumps(
+        #     {
+        #         "content": normalized_content,
+        #         "title": normalized_title,
+        #         "metadata": normalized_metadata,
+        #     },
+        #     sort_keys=True,
+        #     ensure_ascii=False,
+        # )
+        #
+        # # Generate SHA-256 hash
+        # content_hash = hashlib.sha256(content_string.encode("utf-8")).hexdigest()
+        #
+        # return content_hash
+        # -----------------------------------------------------------
+        pass  # REMOVE THIS after uncommenting
 
     @staticmethod
     def generate_id(source_type: str, source: str, url: str) -> str:
@@ -170,69 +189,83 @@ class Document(BaseModel):
 
         logger = LoggingConfig.get_logger(__name__)
 
-        def normalize_url(url: str) -> str:
-            """Normalize a URL for consistent hashing.
+        # TODO [L1]: Implement URL normalization cho consistent hashing
+        # Use Case: Cung 1 document co the co nhieu URL variants (trailing slash, query params, fragments)
+        #           Can normalize de dam bao cung 1 document luon co cung 1 ID
+        # Business Rule: Normalize bang cach: lowercase, remove trailing slash, remove query/fragment
+        # Test: test Document.generate_id() returns consistent UUIDs
+        # -----------------------------------------------------------
+        # def normalize_url(url: str) -> str:
+        #     """Normalize a URL for consistent hashing.
+        #
+        #     This function normalizes URLs by:
+        #     1. Converting to lowercase
+        #     2. Removing trailing slashes
+        #     3. Removing query parameters
+        #     4. Removing fragments
+        #     5. Handling empty paths
+        #     6. Handling malformed URLs
+        #     """
+        #     try:
+        #         # Convert to lowercase first to handle case variations
+        #         url = url.lower().strip()
+        #
+        #         # Parse the URL
+        #         parsed = urlparse(url)
+        #
+        #         # Normalize the scheme and netloc (already lowercase from above)
+        #         scheme = parsed.scheme
+        #         netloc = parsed.netloc
+        #
+        #         # Normalize the path
+        #         path = parsed.path.rstrip("/")
+        #         if not path:  # Handle empty paths
+        #             path = "/"
+        #
+        #         # Construct normalized URL without query parameters and fragments
+        #         normalized = urlunparse(
+        #             (scheme, netloc, path, "", "", "")  # params  # query  # fragment
+        #         )
+        #
+        #         logger.debug(f"Normalized URL: {normalized}")
+        #         return normalized
+        #     except Exception as e:
+        #         logger.error(f"Error normalizing URL {url}: {str(e)}")
+        #         # If URL parsing fails, return the original URL in lowercase
+        #         return url.lower().strip()
+        # -----------------------------------------------------------
 
-            This function normalizes URLs by:
-            1. Converting to lowercase
-            2. Removing trailing slashes
-            3. Removing query parameters
-            4. Removing fragments
-            5. Handling empty paths
-            6. Handling malformed URLs
-            """
-            try:
-                # Convert to lowercase first to handle case variations
-                url = url.lower().strip()
-
-                # Parse the URL
-                parsed = urlparse(url)
-
-                # Normalize the scheme and netloc (already lowercase from above)
-                scheme = parsed.scheme
-                netloc = parsed.netloc
-
-                # Normalize the path
-                path = parsed.path.rstrip("/")
-                if not path:  # Handle empty paths
-                    path = "/"
-
-                # Construct normalized URL without query parameters and fragments
-                normalized = urlunparse(
-                    (scheme, netloc, path, "", "", "")  # params  # query  # fragment
-                )
-
-                logger.debug(f"Normalized URL: {normalized}")
-                return normalized
-            except Exception as e:
-                logger.error(f"Error normalizing URL {url}: {str(e)}")
-                # If URL parsing fails, return the original URL in lowercase
-                return url.lower().strip()
-
-        def normalize_string(s: str) -> str:
-            """Normalize a string for consistent hashing."""
-            normalized = s.strip().lower()
-            logger.debug(f"Normalized string '{s}' to '{normalized}'")
-            return normalized
-
-        # Normalize all inputs
-        normalized_source_type = normalize_string(source_type)
-        normalized_source = normalize_string(source)
-        normalized_url = normalize_url(url)
-
-        # Create a consistent string combining all identifying elements
-        identifier = f"{normalized_source_type}:{normalized_source}:{normalized_url}"
-        logger.debug(f"Generated identifier: {identifier}")
-
-        # Generate a SHA-256 hash of the identifier
-        sha256_hash = hashlib.sha256(identifier.encode("utf-8")).digest()
-
-        # Convert the first 16 bytes to a UUID (UUID is 16 bytes)
-        # This ensures a valid UUID that Qdrant will accept
-        consistent_uuid = uuid.UUID(bytes=sha256_hash[:16])
-        logger.debug(f"Generated UUID: {consistent_uuid}")
-
-        return str(consistent_uuid)
+        # TODO [L1]: Implement string normalization va ID generation
+        # Use Case: Tao UUID nhat quan tu (source_type, source, url) de lam primary key trong Qdrant
+        # Business Rule: SHA-256 hash -> lay 16 bytes dau -> UUID format (Qdrant yeu cau UUID)
+        # Data Flow: normalize inputs -> combine string -> SHA-256 -> UUID
+        # -----------------------------------------------------------
+        # def normalize_string(s: str) -> str:
+        #     """Normalize a string for consistent hashing."""
+        #     normalized = s.strip().lower()
+        #     logger.debug(f"Normalized string '{s}' to '{normalized}'")
+        #     return normalized
+        #
+        # # Normalize all inputs
+        # normalized_source_type = normalize_string(source_type)
+        # normalized_source = normalize_string(source)
+        # normalized_url = normalize_url(url)
+        #
+        # # Create a consistent string combining all identifying elements
+        # identifier = f"{normalized_source_type}:{normalized_source}:{normalized_url}"
+        # logger.debug(f"Generated identifier: {identifier}")
+        #
+        # # Generate a SHA-256 hash of the identifier
+        # sha256_hash = hashlib.sha256(identifier.encode("utf-8")).digest()
+        #
+        # # Convert the first 16 bytes to a UUID (UUID is 16 bytes)
+        # # This ensures a valid UUID that Qdrant will accept
+        # consistent_uuid = uuid.UUID(bytes=sha256_hash[:16])
+        # logger.debug(f"Generated UUID: {consistent_uuid}")
+        #
+        # return str(consistent_uuid)
+        # -----------------------------------------------------------
+        pass  # REMOVE THIS after uncommenting
 
     @staticmethod
     def generate_chunk_id(document_id: str, chunk_index: int) -> str:
@@ -245,16 +278,25 @@ class Document(BaseModel):
         Returns:
             A unique chunk ID
         """
-        # Create a string combining document ID and chunk index
-        chunk_string = f"{document_id}_{chunk_index}"
-
-        # Hash the string to get a consistent length ID
-        chunk_hash = hashlib.sha256(chunk_string.encode()).hexdigest()
-
-        # Convert to UUID format for Qdrant compatibility
-        chunk_uuid = uuid.UUID(chunk_hash[:32])
-
-        return str(chunk_uuid)
+        # TODO [L1]: Implement chunk ID generation
+        # Use Case: Moi document duoc split thanh nhieu chunks, moi chunk can 1 unique ID
+        #           de luu vao Qdrant nhu 1 point rieng biet
+        # Business Rule: Combine document_id + chunk_index -> SHA-256 -> UUID format
+        #                Dam bao cung document + cung index -> cung chunk_id (idempotent)
+        # Data Flow: "{document_id}_{chunk_index}" -> SHA-256 hex -> UUID (32 hex chars)
+        # -----------------------------------------------------------
+        # # Create a string combining document ID and chunk index
+        # chunk_string = f"{document_id}_{chunk_index}"
+        #
+        # # Hash the string to get a consistent length ID
+        # chunk_hash = hashlib.sha256(chunk_string.encode()).hexdigest()
+        #
+        # # Convert to UUID format for Qdrant compatibility
+        # chunk_uuid = uuid.UUID(chunk_hash[:32])
+        #
+        # return str(chunk_uuid)
+        # -----------------------------------------------------------
+        pass  # REMOVE THIS after uncommenting
 
     # Hierarchy convenience methods
     def get_parent_id(self) -> str | None:

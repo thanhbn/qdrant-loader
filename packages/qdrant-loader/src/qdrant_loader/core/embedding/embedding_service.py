@@ -1,3 +1,14 @@
+# ============================================================
+# LEARNING: Embedding Service - Provider-Agnostic Embedding Generation
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/embedding/embedding_service.py
+# Learning Objectives:
+# - [ ] Hieu token validation va truncation logic
+# - [ ] Hieu smart batching: group content theo token limits
+# - [ ] Hieu exponential backoff retry cho network resilience
+# - [ ] Hieu rate limiting giua API requests
+# ============================================================
+
 import asyncio
 import logging
 import time
@@ -81,77 +92,89 @@ class EmbeddingService:
         Raises:
             The last exception if all retries fail
         """
-        last_exception = None
-
-        for attempt in range(self.max_retries + 1):  # +1 for initial attempt
-            try:
-                if attempt > 0:
-                    # Calculate exponential backoff delay
-                    delay = min(
-                        self.base_retry_delay * (2 ** (attempt - 1)),
-                        self.max_retry_delay,
-                    )
-                    logger.warning(
-                        f"Retrying {operation_name} after network error",
-                        attempt=attempt,
-                        max_retries=self.max_retries,
-                        delay_seconds=delay,
-                        last_error=str(last_exception) if last_exception else None,
-                    )
-                    await asyncio.sleep(delay)
-
-                # Execute the operation
-                result = await operation(**kwargs)
-
-                if attempt > 0:
-                    logger.info(
-                        f"Successfully recovered {operation_name} after retries",
-                        successful_attempt=attempt + 1,
-                        total_attempts=attempt + 1,
-                    )
-
-                return result
-
-            except (
-                TimeoutError,
-                requests.exceptions.Timeout,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.HTTPError,
-                ConnectionError,
-                OSError,
-            ) as e:
-                last_exception = e
-
-                if attempt == self.max_retries:
-                    logger.error(
-                        f"All retry attempts failed for {operation_name}",
-                        total_attempts=attempt + 1,
-                        final_error=str(e),
-                        error_type=type(e).__name__,
-                    )
-                    raise
-
-                logger.warning(
-                    f"Network error in {operation_name}, will retry",
-                    attempt=attempt + 1,
-                    max_retries=self.max_retries,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-
-            except Exception as e:
-                # For non-network errors, don't retry
-                logger.error(
-                    f"Non-retryable error in {operation_name}",
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise
-
-        # This should never be reached, but just in case
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"Unexpected error in retry logic for {operation_name}")
+        # -----------------------------------------------------------
+        # TODO [L1]: Implement exponential backoff retry logic
+        # Use Case: API calls co the fail do network issues (timeout, connection error)
+        #           Can retry voi increasing delay de khong overwhelm server
+        # Business Rule: max_retries=3, base_delay=1s, max_delay=30s
+        #                delay = min(base_delay * 2^(attempt-1), max_delay)
+        #                Chi retry cho network errors (Timeout, ConnectionError, HTTPError)
+        #                Non-network errors -> raise ngay, khong retry
+        # Data Flow: operation() -> fail -> delay -> retry -> fail -> longer delay -> retry -> success/final fail
+        # -----------------------------------------------------------
+        # last_exception = None
+        #
+        # for attempt in range(self.max_retries + 1):  # +1 for initial attempt
+        #     try:
+        #         if attempt > 0:
+        #             # Calculate exponential backoff delay
+        #             delay = min(
+        #                 self.base_retry_delay * (2 ** (attempt - 1)),
+        #                 self.max_retry_delay,
+        #             )
+        #             logger.warning(
+        #                 f"Retrying {operation_name} after network error",
+        #                 attempt=attempt,
+        #                 max_retries=self.max_retries,
+        #                 delay_seconds=delay,
+        #                 last_error=str(last_exception) if last_exception else None,
+        #             )
+        #             await asyncio.sleep(delay)
+        #
+        #         # Execute the operation
+        #         result = await operation(**kwargs)
+        #
+        #         if attempt > 0:
+        #             logger.info(
+        #                 f"Successfully recovered {operation_name} after retries",
+        #                 successful_attempt=attempt + 1,
+        #                 total_attempts=attempt + 1,
+        #             )
+        #
+        #         return result
+        #
+        #     except (
+        #         TimeoutError,
+        #         requests.exceptions.Timeout,
+        #         requests.exceptions.ConnectionError,
+        #         requests.exceptions.HTTPError,
+        #         ConnectionError,
+        #         OSError,
+        #     ) as e:
+        #         last_exception = e
+        #
+        #         if attempt == self.max_retries:
+        #             logger.error(
+        #                 f"All retry attempts failed for {operation_name}",
+        #                 total_attempts=attempt + 1,
+        #                 final_error=str(e),
+        #                 error_type=type(e).__name__,
+        #             )
+        #             raise
+        #
+        #         logger.warning(
+        #             f"Network error in {operation_name}, will retry",
+        #             attempt=attempt + 1,
+        #             max_retries=self.max_retries,
+        #             error=str(e),
+        #             error_type=type(e).__name__,
+        #         )
+        #
+        #     except Exception as e:
+        #         # For non-network errors, don't retry
+        #         logger.error(
+        #             f"Non-retryable error in {operation_name}",
+        #             error=str(e),
+        #             error_type=type(e).__name__,
+        #         )
+        #         raise
+        #
+        # # This should never be reached, but just in case
+        # if last_exception:
+        #     raise last_exception
+        # raise RuntimeError(f"Unexpected error in retry logic for {operation_name}")
+        # -----------------------------------------------------------
+        return await operation(**kwargs)  # REMOVE THIS after uncommenting
 
     async def get_embeddings(
         self, texts: Sequence[str | Document]
@@ -231,37 +254,50 @@ class EmbeddingService:
                 f"⚠️ Truncated {truncated_count} content items due to token limits. You might want to adjust chunk size and/or max tokens settings in config.yaml"
             )
 
-        # Create smart batches that respect token limits
-        embeddings = []
-        current_batch = []
-        current_batch_tokens = 0
-        batch_count = 0
-
-        for content in validated_contents:
-            content_tokens = self.count_tokens(content)
-
-            # Check if adding this content would exceed the token limit
-            if current_batch and (
-                current_batch_tokens + content_tokens > MAX_TOKENS_PER_REQUEST
-            ):
-                # Process current batch
-                batch_count += 1
-                batch_embeddings = await self._process_batch(current_batch)
-                embeddings.extend(batch_embeddings)
-
-                # Start new batch
-                current_batch = [content]
-                current_batch_tokens = content_tokens
-            else:
-                # Add to current batch
-                current_batch.append(content)
-                current_batch_tokens += content_tokens
-
-        # Process final batch if it exists
-        if current_batch:
-            batch_count += 1
-            batch_embeddings = await self._process_batch(current_batch)
-            embeddings.extend(batch_embeddings)
+        # -----------------------------------------------------------
+        # TODO [L1]: Implement smart batching voi token limits
+        # Use Case: OpenAI API co gioi han tokens per request (MAX_TOKENS_PER_REQUEST)
+        #           Can chia validated_contents thanh nhieu batches sao cho moi batch
+        #           khong vuot qua token limit
+        # Business Rule: Accumulate contents vao current_batch, tracking current_batch_tokens
+        #                Khi them 1 content ma vuot MAX_TOKENS_PER_REQUEST -> process current batch truoc
+        #                roi bat dau batch moi. Cuoi cung process final batch con lai.
+        # Data Flow: validated_contents -> accumulate by token count -> _process_batch() per batch -> aggregate embeddings
+        # -----------------------------------------------------------
+        # # Create smart batches that respect token limits
+        # embeddings = []
+        # current_batch = []
+        # current_batch_tokens = 0
+        # batch_count = 0
+        #
+        # for content in validated_contents:
+        #     content_tokens = self.count_tokens(content)
+        #
+        #     # Check if adding this content would exceed the token limit
+        #     if current_batch and (
+        #         current_batch_tokens + content_tokens > MAX_TOKENS_PER_REQUEST
+        #     ):
+        #         # Process current batch
+        #         batch_count += 1
+        #         batch_embeddings = await self._process_batch(current_batch)
+        #         embeddings.extend(batch_embeddings)
+        #
+        #         # Start new batch
+        #         current_batch = [content]
+        #         current_batch_tokens = content_tokens
+        #     else:
+        #         # Add to current batch
+        #         current_batch.append(content)
+        #         current_batch_tokens += content_tokens
+        #
+        # # Process final batch if it exists
+        # if current_batch:
+        #     batch_count += 1
+        #     batch_embeddings = await self._process_batch(current_batch)
+        #     embeddings.extend(batch_embeddings)
+        # -----------------------------------------------------------
+        embeddings = []  # REMOVE THIS after uncommenting
+        batch_count = 0  # REMOVE THIS after uncommenting
 
         logger.info(
             f"🔗 Generated embeddings: {len(embeddings)} items in {batch_count} batches"

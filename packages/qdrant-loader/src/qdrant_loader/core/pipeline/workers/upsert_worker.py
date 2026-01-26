@@ -1,3 +1,12 @@
+# ============================================================
+# LEARNING: Upsert Worker - Vector Database Writer
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/pipeline/workers/upsert_worker.py
+# Learning Objectives:
+# - [ ] Hieu cach tao PointStruct tu (chunk, embedding) cho Qdrant
+# - [ ] Hieu payload structure luu trong Qdrant (content, metadata, source, timestamps)
+# - [ ] Hieu parent document tracking de biet document nao da process thanh cong
+# ============================================================
 """Upsert worker for upserting embedded chunks to Qdrant."""
 
 import asyncio
@@ -62,49 +71,59 @@ class UpsertWorker(BaseWorker):
         errors = []
 
         try:
-            with prometheus_metrics.UPSERT_DURATION.time():
-                points = [
-                    models.PointStruct(
-                        id=chunk.id,
-                        vector=embedding,
-                        payload={
-                            "content": chunk.content,
-                            "metadata": {
-                                k: v
-                                for k, v in chunk.metadata.items()
-                                if k != "parent_document"
-                            },
-                            "source": chunk.source,
-                            "source_type": chunk.source_type,
-                            "created_at": chunk.created_at.isoformat(),
-                            "updated_at": (
-                                getattr(
-                                    chunk, "updated_at", chunk.created_at
-                                ).isoformat()
-                                if hasattr(chunk, "updated_at")
-                                else chunk.created_at.isoformat()
-                            ),
-                            "title": getattr(
-                                chunk, "title", chunk.metadata.get("title", "")
-                            ),
-                            "url": getattr(chunk, "url", chunk.metadata.get("url", "")),
-                            "document_id": chunk.metadata.get(
-                                "parent_document_id", chunk.id
-                            ),
-                        },
-                    )
-                    for chunk, embedding in batch
-                ]
-
-                await self.qdrant_manager.upsert_points(points)
-                prometheus_metrics.INGESTED_DOCUMENTS.inc(len(points))
-                success_count = len(points)
-
-                # Mark parent documents as successfully processed
-                for chunk, _ in batch:
-                    parent_doc = chunk.metadata.get("parent_document")
-                    if parent_doc:
-                        successful_doc_ids.add(parent_doc.id)
+            # -----------------------------------------------------------
+            # TODO [L1]: Implement PointStruct creation va Qdrant upsert
+            # Use Case: Chuyen (chunk, embedding) thanh Qdrant PointStruct va upsert vao collection
+            # Business Rule: Moi point gom: id=chunk.id, vector=embedding, payload={content, metadata, source, timestamps, title, url, document_id}
+            #                metadata loai bo "parent_document" key (chi dung internal)
+            #                Sau upsert thanh cong, track parent document IDs de update state
+            # Data Flow: batch of (chunk, embedding) -> PointStruct list -> qdrant_manager.upsert_points() -> track parent doc IDs
+            # -----------------------------------------------------------
+            # with prometheus_metrics.UPSERT_DURATION.time():
+            #     points = [
+            #         models.PointStruct(
+            #             id=chunk.id,
+            #             vector=embedding,
+            #             payload={
+            #                 "content": chunk.content,
+            #                 "metadata": {
+            #                     k: v
+            #                     for k, v in chunk.metadata.items()
+            #                     if k != "parent_document"
+            #                 },
+            #                 "source": chunk.source,
+            #                 "source_type": chunk.source_type,
+            #                 "created_at": chunk.created_at.isoformat(),
+            #                 "updated_at": (
+            #                     getattr(
+            #                         chunk, "updated_at", chunk.created_at
+            #                     ).isoformat()
+            #                     if hasattr(chunk, "updated_at")
+            #                     else chunk.created_at.isoformat()
+            #                 ),
+            #                 "title": getattr(
+            #                     chunk, "title", chunk.metadata.get("title", "")
+            #                 ),
+            #                 "url": getattr(chunk, "url", chunk.metadata.get("url", "")),
+            #                 "document_id": chunk.metadata.get(
+            #                     "parent_document_id", chunk.id
+            #                 ),
+            #             },
+            #         )
+            #         for chunk, embedding in batch
+            #     ]
+            #
+            #     await self.qdrant_manager.upsert_points(points)
+            #     prometheus_metrics.INGESTED_DOCUMENTS.inc(len(points))
+            #     success_count = len(points)
+            #
+            #     # Mark parent documents as successfully processed
+            #     for chunk, _ in batch:
+            #         parent_doc = chunk.metadata.get("parent_document")
+            #         if parent_doc:
+            #             successful_doc_ids.add(parent_doc.id)
+            # -----------------------------------------------------------
+            pass  # REMOVE THIS after uncommenting
 
         except Exception as e:
             for chunk, _ in batch:
@@ -134,33 +153,43 @@ class UpsertWorker(BaseWorker):
         batch = []
 
         try:
-            async for chunk_embedding in embedded_chunks:
-                if self.shutdown_event.is_set():
-                    logger.debug("UpsertWorker exiting due to shutdown")
-                    break
-
-                batch.append(chunk_embedding)
-
-                # Process batch when it reaches the desired size
-                if len(batch) >= self.batch_size:
-                    success_count, error_count, successful_doc_ids, errors = (
-                        await self.process(batch)
-                    )
-                    result.success_count += success_count
-                    result.error_count += error_count
-                    result.successfully_processed_documents.update(successful_doc_ids)
-                    result.errors.extend(errors)
-                    batch = []
-
-            # Process any remaining chunks in the final batch
-            if batch and not self.shutdown_event.is_set():
-                success_count, error_count, successful_doc_ids, errors = (
-                    await self.process(batch)
-                )
-                result.success_count += success_count
-                result.error_count += error_count
-                result.successfully_processed_documents.update(successful_doc_ids)
-                result.errors.extend(errors)
+            # -----------------------------------------------------------
+            # TODO [L2]: Implement batch accumulation va upsert streaming
+            # Use Case: Nhan (chunk, embedding) tuples tu async iterator, gom thanh batch, upsert vao Qdrant
+            # Data Flow: embedded_chunks stream -> accumulate to batch_size -> process() -> update PipelineResult
+            #            -> process remaining final batch -> return aggregated result
+            # Business Rule: Giong EmbeddingWorker: accumulate -> process khi dat batch_size -> xu ly final batch
+            #                Aggregate success_count, error_count, successful_doc_ids across all batches
+            # -----------------------------------------------------------
+            # async for chunk_embedding in embedded_chunks:
+            #     if self.shutdown_event.is_set():
+            #         logger.debug("UpsertWorker exiting due to shutdown")
+            #         break
+            #
+            #     batch.append(chunk_embedding)
+            #
+            #     # Process batch when it reaches the desired size
+            #     if len(batch) >= self.batch_size:
+            #         success_count, error_count, successful_doc_ids, errors = (
+            #             await self.process(batch)
+            #         )
+            #         result.success_count += success_count
+            #         result.error_count += error_count
+            #         result.successfully_processed_documents.update(successful_doc_ids)
+            #         result.errors.extend(errors)
+            #         batch = []
+            #
+            # # Process any remaining chunks in the final batch
+            # if batch and not self.shutdown_event.is_set():
+            #     success_count, error_count, successful_doc_ids, errors = (
+            #         await self.process(batch)
+            #     )
+            #     result.success_count += success_count
+            #     result.error_count += error_count
+            #     result.successfully_processed_documents.update(successful_doc_ids)
+            #     result.errors.extend(errors)
+            # -----------------------------------------------------------
+            pass  # REMOVE THIS after uncommenting
 
         except asyncio.CancelledError:
             logger.debug("UpsertWorker cancelled")

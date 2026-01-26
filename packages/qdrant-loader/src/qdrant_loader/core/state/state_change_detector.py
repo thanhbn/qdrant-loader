@@ -1,3 +1,13 @@
+# ============================================================
+# LEARNING: State Change Detector - Incremental Sync Engine
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/state/state_change_detector.py
+# Learning Objectives:
+# - [ ] Hieu set-based change detection algorithm (new, updated, deleted)
+# - [ ] Hieu cach so sanh content_hash va updated_at de detect updates
+# - [ ] Hieu URI generation cho consistent document identification
+# ============================================================
+
 """Base classes for connectors and change detectors."""
 
 from datetime import datetime
@@ -66,51 +76,62 @@ class StateChangeDetector:
 
         self.logger.info("Starting change detection", document_count=len(documents))
 
-        # Get current and previous states
-        current_states = [self._get_document_state(doc) for doc in documents]
-        previous_states = await self._get_previous_states(filtered_config)
-
-        # Create lookup sets/dicts for efficient comparison
-        previous_uris: set[str] = {state.uri for state in previous_states}
-        previous_states_dict: dict[str, DocumentState] = {
-            state.uri: state for state in previous_states
-        }
-        current_uris: set[str] = {state.uri for state in current_states}
-
-        # Find changes efficiently
-        new_docs = [
-            doc
-            for state, doc in zip(current_states, documents, strict=False)
-            if state.uri not in previous_uris
-        ]
-
-        updated_docs = [
-            doc
-            for state, doc in zip(current_states, documents, strict=False)
-            if state.uri in previous_states_dict
-            and self._is_document_updated(state, previous_states_dict[state.uri])
-        ]
-
-        deleted_docs = [
-            self._create_deleted_document(state)
-            for state in previous_states
-            if state.uri not in current_uris
-        ]
-
-        changes = {
-            "new": new_docs,
-            "updated": updated_docs,
-            "deleted": deleted_docs,
-        }
-
-        self.logger.info(
-            "Change detection completed",
-            new_count=len(new_docs),
-            updated_count=len(updated_docs),
-            deleted_count=len(deleted_docs),
-        )
-
-        return changes
+        # TODO [L1]: Implement set-based change detection algorithm
+        # Use Case: So sanh documents hien tai voi previous state (SQLite) de tim:
+        #           - new: documents co URI chua ton tai trong previous states
+        #           - updated: documents co URI da ton tai NHUNG content_hash thay doi hoac updated_at moi hon
+        #           - deleted: documents co URI trong previous states NHUNG khong con trong current
+        # Business Rule: Dung URI (source_type:source:normalized_url) lam unique key
+        #                So sanh bang set operations de hieu qua O(n)
+        # Data Flow: documents -> current_states -> compare with previous_states -> {new, updated, deleted}
+        # -----------------------------------------------------------
+        # # Get current and previous states
+        # current_states = [self._get_document_state(doc) for doc in documents]
+        # previous_states = await self._get_previous_states(filtered_config)
+        #
+        # # Create lookup sets/dicts for efficient comparison
+        # previous_uris: set[str] = {state.uri for state in previous_states}
+        # previous_states_dict: dict[str, DocumentState] = {
+        #     state.uri: state for state in previous_states
+        # }
+        # current_uris: set[str] = {state.uri for state in current_states}
+        #
+        # # Find changes efficiently
+        # new_docs = [
+        #     doc
+        #     for state, doc in zip(current_states, documents, strict=False)
+        #     if state.uri not in previous_uris
+        # ]
+        #
+        # updated_docs = [
+        #     doc
+        #     for state, doc in zip(current_states, documents, strict=False)
+        #     if state.uri in previous_states_dict
+        #     and self._is_document_updated(state, previous_states_dict[state.uri])
+        # ]
+        #
+        # deleted_docs = [
+        #     self._create_deleted_document(state)
+        #     for state in previous_states
+        #     if state.uri not in current_uris
+        # ]
+        #
+        # changes = {
+        #     "new": new_docs,
+        #     "updated": updated_docs,
+        #     "deleted": deleted_docs,
+        # }
+        #
+        # self.logger.info(
+        #     "Change detection completed",
+        #     new_count=len(new_docs),
+        #     updated_count=len(updated_docs),
+        #     deleted_count=len(deleted_docs),
+        # )
+        #
+        # return changes
+        # -----------------------------------------------------------
+        return {"new": documents, "updated": [], "deleted": []}  # REMOVE THIS after uncommenting
 
     def _get_document_state(self, document: Document) -> DocumentState:
         """Get the standardized state of a document."""
@@ -127,10 +148,18 @@ class StateChangeDetector:
         self, current_state: DocumentState, previous_state: DocumentState
     ) -> bool:
         """Check if a document has been updated."""
-        return (
-            current_state.content_hash != previous_state.content_hash
-            or current_state.updated_at > previous_state.updated_at
-        )
+        # TODO [L1]: Implement update detection logic
+        # Use Case: Kiem tra 1 document co thay doi hay khong
+        # Business Rule: Document duoc coi la "updated" neu:
+        #   1. content_hash thay doi (noi dung da bi sua) HOAC
+        #   2. updated_at cua current > previous (timestamp moi hon)
+        # -----------------------------------------------------------
+        # return (
+        #     current_state.content_hash != previous_state.content_hash
+        #     or current_state.updated_at > previous_state.updated_at
+        # )
+        # -----------------------------------------------------------
+        return False  # REMOVE THIS after uncommenting
 
     def _create_deleted_document(self, document_state: DocumentState) -> Document:
         """Create a minimal document for a deleted item."""

@@ -1,3 +1,13 @@
+# ============================================================
+# LEARNING: File Converter - Multi-Format to Markdown
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/file_conversion/file_converter.py
+# Learning Objectives:
+# - [ ] Hieu file validation pipeline (exists, readable, size, supported type)
+# - [ ] Hieu MarkItDown conversion voi timeout handling (Unix signals vs Windows threading)
+# - [ ] Hieu fallback document creation khi conversion that bai
+# ============================================================
+
 """Main file conversion service using MarkItDown."""
 
 import os
@@ -400,26 +410,38 @@ class FileConverter:
         self.logger.info("Starting file conversion", file_path=normalized_path)
 
         try:
-            self._validate_file(file_path)
-            markitdown = self._get_markitdown()
+            # -----------------------------------------------------------
+            # TODO [L2]: Implement file conversion pipeline
+            # Use Case: Convert file (PDF, DOCX, XLSX, images, etc.) sang Markdown de chunking
+            # Data Flow: file_path -> validate -> get MarkItDown instance -> convert with timeout -> return markdown
+            # Business Rule:
+            #   1. Validate file truoc (exists, readable, size limit, supported type)
+            #   2. Dung TimeoutHandler de gioi han thoi gian conversion
+            #   3. Dung capture_openpyxl_warnings() de handle Excel warnings
+            #   4. Ket qua co the la result.text_content hoac str(result)
+            # -----------------------------------------------------------
+            # self._validate_file(file_path)
+            # markitdown = self._get_markitdown()
 
-            # Apply timeout wrapper and warning capture for conversion
-            with TimeoutHandler(self.config.conversion_timeout, file_path):
-                with capture_openpyxl_warnings(self.logger, file_path):
-                    result = markitdown.convert(file_path)
+            # # Apply timeout wrapper and warning capture for conversion
+            # with TimeoutHandler(self.config.conversion_timeout, file_path):
+            #     with capture_openpyxl_warnings(self.logger, file_path):
+            #         result = markitdown.convert(file_path)
 
-            if hasattr(result, "text_content"):
-                markdown_content = result.text_content
-            else:
-                markdown_content = str(result)
+            # if hasattr(result, "text_content"):
+            #     markdown_content = result.text_content
+            # else:
+            #     markdown_content = str(result)
 
-            self.logger.info(
-                "File conversion completed",
-                file_path=normalized_path,
-                content_length=len(markdown_content),
-                timeout_used=self.config.conversion_timeout,
-            )
-            return markdown_content
+            # self.logger.info(
+            #     "File conversion completed",
+            #     file_path=normalized_path,
+            #     content_length=len(markdown_content),
+            #     timeout_used=self.config.conversion_timeout,
+            # )
+            # return markdown_content
+            # -----------------------------------------------------------
+            return ""  # REMOVE THIS after uncommenting
 
         except ConversionTimeoutError:
             # Re-raise timeout errors as-is
@@ -437,21 +459,32 @@ class FileConverter:
 
     def _validate_file(self, file_path: str) -> None:
         """Validate file for conversion."""
-        if not os.path.exists(file_path):
-            raise FileAccessError(f"File does not exist: {file_path}")
+        # -----------------------------------------------------------
+        # TODO [L1]: Implement file validation pipeline
+        # Use Case: Kiem tra file truoc khi convert de fail fast voi error message ro rang
+        # Business Rule: 4 buoc validation theo thu tu:
+        #   1. File ton tai (os.path.exists) -> FileAccessError
+        #   2. File doc duoc (os.access R_OK) -> FileAccessError
+        #   3. File size trong gioi han (config.is_file_size_allowed) -> FileSizeExceededError
+        #   4. File type duoc ho tro (file_detector.is_supported_for_conversion) -> UnsupportedFileTypeError
+        # -----------------------------------------------------------
+        # if not os.path.exists(file_path):
+        #     raise FileAccessError(f"File does not exist: {file_path}")
 
-        if not os.access(file_path, os.R_OK):
-            raise FileAccessError(f"File is not readable: {file_path}")
+        # if not os.access(file_path, os.R_OK):
+        #     raise FileAccessError(f"File is not readable: {file_path}")
 
-        file_size = os.path.getsize(file_path)
-        if not self.config.is_file_size_allowed(file_size):
-            raise FileSizeExceededError(file_size, self.config.max_file_size, file_path)
+        # file_size = os.path.getsize(file_path)
+        # if not self.config.is_file_size_allowed(file_size):
+        #     raise FileSizeExceededError(file_size, self.config.max_file_size, file_path)
 
-        if not self.file_detector.is_supported_for_conversion(file_path):
-            file_info = self.file_detector.get_file_type_info(file_path)
-            raise UnsupportedFileTypeError(
-                file_info.get("normalized_type", "unknown"), file_path
-            )
+        # if not self.file_detector.is_supported_for_conversion(file_path):
+        #     file_info = self.file_detector.get_file_type_info(file_path)
+        #     raise UnsupportedFileTypeError(
+        #         file_info.get("normalized_type", "unknown"), file_path
+        #     )
+        # -----------------------------------------------------------
+        pass  # REMOVE THIS after uncommenting
 
     def create_fallback_document(self, file_path: str, error: Exception) -> str:
         """Create a fallback Markdown document when conversion fails."""

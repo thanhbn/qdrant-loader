@@ -1,3 +1,14 @@
+# ============================================================
+# LEARNING: Pipeline Orchestrator - Central Coordinator
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/pipeline/orchestrator.py
+# Learning Objectives:
+# - [ ] Hieu luong xu ly chinh: collect -> detect changes -> process -> update state
+# - [ ] Hieu cach collect documents tu nhieu source types (Confluence, Git, Jira, etc.)
+# - [ ] Hieu change detection: chi process documents moi/thay doi
+# - [ ] Hieu multi-project processing voi error resilience
+# ============================================================
+
 """Main orchestrator for the ingestion pipeline."""
 
 from qdrant_loader.config import Settings, SourcesConfig
@@ -212,50 +223,57 @@ class PipelineOrchestrator:
         """Collect documents from all configured sources."""
         documents = []
 
-        # Process each source type with project context
-        if filtered_config.confluence:
-            confluence_docs = (
-                await self.components.source_processor.process_source_type(
-                    filtered_config.confluence, ConfluenceConnector, "Confluence"
-                )
-            )
-            documents.extend(confluence_docs)
-
-        if filtered_config.git:
-            git_docs = await self.components.source_processor.process_source_type(
-                filtered_config.git, GitConnector, "Git"
-            )
-            documents.extend(git_docs)
-
-        if filtered_config.jira:
-            jira_docs = await self.components.source_processor.process_source_type(
-                filtered_config.jira, JiraConnector, "Jira"
-            )
-            documents.extend(jira_docs)
-
-        if filtered_config.publicdocs:
-            publicdocs_docs = (
-                await self.components.source_processor.process_source_type(
-                    filtered_config.publicdocs, PublicDocsConnector, "PublicDocs"
-                )
-            )
-            documents.extend(publicdocs_docs)
-
-        if filtered_config.localfile:
-            localfile_docs = await self.components.source_processor.process_source_type(
-                filtered_config.localfile, LocalFileConnector, "LocalFile"
-            )
-            documents.extend(localfile_docs)
-
-        # Inject project metadata into documents if project context is available
-        if project_id and self.project_manager:
-            for document in documents:
-                enhanced_metadata = self.project_manager.inject_project_metadata(
-                    project_id, document.metadata
-                )
-                document.metadata = enhanced_metadata
-
-        logger.info(f"📄 Collected {len(documents)} documents from all sources")
+        # TODO [L2]: Implement multi-source document collection
+        # Use Case: Thu thap documents tu TAT CA source types da cau hinh (Confluence, Git, Jira, PublicDocs, LocalFile)
+        # Data Flow: filtered_config -> check each source type -> process via connector -> aggregate documents
+        # Business Rule: Moi source type co 1 connector rieng, tat ca documents duoc gop lai
+        #                Sau do inject project metadata neu co project context
+        # -----------------------------------------------------------
+        # # Process each source type with project context
+        # if filtered_config.confluence:
+        #     confluence_docs = (
+        #         await self.components.source_processor.process_source_type(
+        #             filtered_config.confluence, ConfluenceConnector, "Confluence"
+        #         )
+        #     )
+        #     documents.extend(confluence_docs)
+        #
+        # if filtered_config.git:
+        #     git_docs = await self.components.source_processor.process_source_type(
+        #         filtered_config.git, GitConnector, "Git"
+        #     )
+        #     documents.extend(git_docs)
+        #
+        # if filtered_config.jira:
+        #     jira_docs = await self.components.source_processor.process_source_type(
+        #         filtered_config.jira, JiraConnector, "Jira"
+        #     )
+        #     documents.extend(jira_docs)
+        #
+        # if filtered_config.publicdocs:
+        #     publicdocs_docs = (
+        #         await self.components.source_processor.process_source_type(
+        #             filtered_config.publicdocs, PublicDocsConnector, "PublicDocs"
+        #         )
+        #     )
+        #     documents.extend(publicdocs_docs)
+        #
+        # if filtered_config.localfile:
+        #     localfile_docs = await self.components.source_processor.process_source_type(
+        #         filtered_config.localfile, LocalFileConnector, "LocalFile"
+        #     )
+        #     documents.extend(localfile_docs)
+        #
+        # # Inject project metadata into documents if project context is available
+        # if project_id and self.project_manager:
+        #     for document in documents:
+        #         enhanced_metadata = self.project_manager.inject_project_metadata(
+        #             project_id, document.metadata
+        #         )
+        #         document.metadata = enhanced_metadata
+        #
+        # logger.info(f"📄 Collected {len(documents)} documents from all sources")
+        # -----------------------------------------------------------
         return documents
 
     async def _detect_document_changes(
@@ -270,30 +288,39 @@ class PipelineOrchestrator:
 
         logger.debug(f"Starting change detection for {len(documents)} documents")
 
-        try:
-            # Ensure state manager is initialized before use
-            if not self.components.state_manager._initialized:
-                logger.debug("Initializing state manager for change detection")
-                await self.components.state_manager.initialize()
-
-            async with StateChangeDetector(
-                self.components.state_manager
-            ) as change_detector:
-                changes = await change_detector.detect_changes(
-                    documents, filtered_config
-                )
-
-                logger.info(
-                    f"🔍 Change detection: {len(changes['new'])} new, "
-                    f"{len(changes['updated'])} updated, {len(changes['deleted'])} deleted"
-                )
-
-                # Return new and updated documents
-                return changes["new"] + changes["updated"]
-
-        except Exception as e:
-            logger.error(f"Error during change detection: {e}", exc_info=True)
-            raise
+        # TODO [L1]: Implement incremental sync via change detection
+        # Use Case: Tranh re-process TOAN BO documents moi lan ingest
+        #           Chi process documents MOI hoac DA THAY DOI (tiet kiem API calls + thoi gian)
+        # Business Rule: So sanh documents hien tai voi state database (SQLite)
+        #                Tra ve chi documents "new" + "updated", bo qua "unchanged"
+        # Data Flow: documents -> StateChangeDetector -> {new, updated, deleted} -> return new + updated
+        # -----------------------------------------------------------
+        # try:
+        #     # Ensure state manager is initialized before use
+        #     if not self.components.state_manager._initialized:
+        #         logger.debug("Initializing state manager for change detection")
+        #         await self.components.state_manager.initialize()
+        #
+        #     async with StateChangeDetector(
+        #         self.components.state_manager
+        #     ) as change_detector:
+        #         changes = await change_detector.detect_changes(
+        #             documents, filtered_config
+        #         )
+        #
+        #         logger.info(
+        #             f"🔍 Change detection: {len(changes['new'])} new, "
+        #             f"{len(changes['updated'])} updated, {len(changes['deleted'])} deleted"
+        #         )
+        #
+        #         # Return new and updated documents
+        #         return changes["new"] + changes["updated"]
+        #
+        # except Exception as e:
+        #     logger.error(f"Error during change detection: {e}", exc_info=True)
+        #     raise
+        # -----------------------------------------------------------
+        return documents  # REMOVE THIS after uncommenting (placeholder returns all docs)
 
     async def _update_document_states(
         self,

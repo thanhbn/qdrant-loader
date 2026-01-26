@@ -1,3 +1,12 @@
+# ============================================================
+# LEARNING: Chunking Service - Strategy Pattern
+# This file has been annotated with TODO markers for learning.
+# To restore: git checkout -- packages/qdrant-loader/src/qdrant_loader/core/chunking/chunking_service.py
+# Learning Objectives:
+# - [ ] Hieu Strategy Pattern: chon chunking strategy theo document type
+# - [ ] Hieu cach detect converted files (MarkItDown) va chon Markdown strategy
+# - [ ] Hieu validation config (chunk_size > 0, overlap < chunk_size)
+# ============================================================
 """Service for chunking documents."""
 
 import logging
@@ -97,63 +106,75 @@ class ChunkingService:
         Returns:
             The appropriate chunking strategy for the document type
         """
-        # Check if this is a converted file
-        conversion_method = document.metadata.get("conversion_method")
-        if conversion_method == "markitdown":
-            # Files converted with MarkItDown are now in markdown format
-            self.logger.info(
-                "Using markdown strategy for converted file",
-                original_file_type=document.metadata.get("original_file_type"),
-                conversion_method=conversion_method,
-                document_id=document.id,
-                document_title=document.title,
-            )
-            return MarkdownChunkingStrategy(self.settings)
-        elif conversion_method == "markitdown_fallback":
-            # Fallback documents are also in markdown format
-            self.logger.info(
-                "Using markdown strategy for fallback converted file",
-                original_file_type=document.metadata.get("original_file_type"),
-                conversion_method=conversion_method,
-                conversion_failed=document.metadata.get("conversion_failed", False),
-                document_id=document.id,
-                document_title=document.title,
-            )
-            return MarkdownChunkingStrategy(self.settings)
-
-        # Get file extension from the document content type
-        file_type = document.content_type.lower()
-
-        self.logger.debug(
-            "Selecting chunking strategy",
-            file_type=file_type,
-            available_strategies=list(self.strategies.keys()),
-            document_id=document.id,
-            document_source=document.source,
-            document_title=document.title,
-            conversion_method=conversion_method,
-        )
-
-        # Get strategy class for file type
-        strategy_class = self.strategies.get(file_type)
-
-        if strategy_class:
-            self.logger.debug(
-                "Using specific strategy for this file type",
-                file_type=file_type,
-                strategy=strategy_class.__name__,
-                document_id=document.id,
-                document_title=document.title,
-            )
-            return strategy_class(self.settings)
-
-        self.logger.debug(
-            "No specific strategy found for this file type, using default text chunking strategy",
-            file_type=file_type,
-            document_id=document.id,
-            document_title=document.title,
-        )
-        return self.default_strategy
+        # TODO [L1]: Implement strategy selection logic (Strategy Pattern)
+        # Use Case: Chon chunking strategy phu hop voi tung loai document
+        #           VD: .md -> MarkdownChunkingStrategy, .py -> CodeChunkingStrategy, .html -> HTMLChunkingStrategy
+        # Business Rule:
+        #   1. Neu document duoc convert boi MarkItDown (metadata.conversion_method == "markitdown") -> dung MarkdownChunkingStrategy
+        #   2. Neu document la markitdown_fallback -> cung dung MarkdownChunkingStrategy
+        #   3. Neu file extension co trong self.strategies dict -> dung strategy tuong ung
+        #   4. Mac dinh -> dung DefaultChunkingStrategy
+        # Data Flow: document -> check conversion_method -> check content_type -> lookup strategies dict -> return strategy instance
+        # -----------------------------------------------------------
+        # # Check if this is a converted file
+        # conversion_method = document.metadata.get("conversion_method")
+        # if conversion_method == "markitdown":
+        #     # Files converted with MarkItDown are now in markdown format
+        #     self.logger.info(
+        #         "Using markdown strategy for converted file",
+        #         original_file_type=document.metadata.get("original_file_type"),
+        #         conversion_method=conversion_method,
+        #         document_id=document.id,
+        #         document_title=document.title,
+        #     )
+        #     return MarkdownChunkingStrategy(self.settings)
+        # elif conversion_method == "markitdown_fallback":
+        #     # Fallback documents are also in markdown format
+        #     self.logger.info(
+        #         "Using markdown strategy for fallback converted file",
+        #         original_file_type=document.metadata.get("original_file_type"),
+        #         conversion_method=conversion_method,
+        #         conversion_failed=document.metadata.get("conversion_failed", False),
+        #         document_id=document.id,
+        #         document_title=document.title,
+        #     )
+        #     return MarkdownChunkingStrategy(self.settings)
+        #
+        # # Get file extension from the document content type
+        # file_type = document.content_type.lower()
+        #
+        # self.logger.debug(
+        #     "Selecting chunking strategy",
+        #     file_type=file_type,
+        #     available_strategies=list(self.strategies.keys()),
+        #     document_id=document.id,
+        #     document_source=document.source,
+        #     document_title=document.title,
+        #     conversion_method=conversion_method,
+        # )
+        #
+        # # Get strategy class for file type
+        # strategy_class = self.strategies.get(file_type)
+        #
+        # if strategy_class:
+        #     self.logger.debug(
+        #         "Using specific strategy for this file type",
+        #         file_type=file_type,
+        #         strategy=strategy_class.__name__,
+        #         document_id=document.id,
+        #         document_title=document.title,
+        #     )
+        #     return strategy_class(self.settings)
+        #
+        # self.logger.debug(
+        #     "No specific strategy found for this file type, using default text chunking strategy",
+        #     file_type=file_type,
+        #     document_id=document.id,
+        #     document_title=document.title,
+        # )
+        # return self.default_strategy
+        # -----------------------------------------------------------
+        return self.default_strategy  # REMOVE THIS after uncommenting
 
     def chunk_document(self, document: Document) -> list[Document]:
         """Chunk a document into smaller pieces.
@@ -200,25 +221,31 @@ class ChunkingService:
             )
 
         try:
-            # Chunk the document using the selected strategy
-            chunked_docs = strategy.chunk_document(document)
-
-            # Optimized: Only calculate and log detailed metrics when debug logging is enabled
-            if logging.getLogger().isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Document chunking completed",
-                    extra={
-                        "doc_id": document.id,
-                        "chunk_count": len(chunked_docs),
-                        "avg_chunk_size": (
-                            sum(len(d.content) for d in chunked_docs)
-                            / len(chunked_docs)
-                            if chunked_docs
-                            else 0
-                        ),
-                    },
-                )
-            return chunked_docs
+            # TODO [L2]: Implement document chunking delegation
+            # Use Case: Goi strategy.chunk_document() de thuc hien chunking
+            # Data Flow: document -> strategy.chunk_document() -> list[Document] chunks
+            # -----------------------------------------------------------
+            # # Chunk the document using the selected strategy
+            # chunked_docs = strategy.chunk_document(document)
+            #
+            # # Optimized: Only calculate and log detailed metrics when debug logging is enabled
+            # if logging.getLogger().isEnabledFor(logging.DEBUG):
+            #     self.logger.debug(
+            #         "Document chunking completed",
+            #         extra={
+            #             "doc_id": document.id,
+            #             "chunk_count": len(chunked_docs),
+            #             "avg_chunk_size": (
+            #                 sum(len(d.content) for d in chunked_docs)
+            #                 / len(chunked_docs)
+            #                 if chunked_docs
+            #                 else 0
+            #             ),
+            #         },
+            #     )
+            # return chunked_docs
+            # -----------------------------------------------------------
+            return [document.model_copy()]  # REMOVE THIS after uncommenting
         except Exception as e:
             self.logger.error(
                 f"Error chunking document {document.id}: {str(e)}",
