@@ -111,7 +111,7 @@ class TestLoggingSetup:
         _setup_logging("DEBUG")
 
         mock_logging_config.setup.assert_called_once_with(
-            level="DEBUG", format="console"
+            level="DEBUG", format="console", minimal=False
         )
 
     @patch("qdrant_loader_mcp_server.cli.LoggingConfig")
@@ -124,7 +124,9 @@ class TestLoggingSetup:
 
         _setup_logging("INFO")
 
-        mock_logging_config.setup.assert_called_once_with(level="INFO", format="json")
+        mock_logging_config.setup.assert_called_once_with(
+            level="INFO", format="json", minimal=False
+        )
 
     @patch("qdrant_loader_mcp_server.cli.LoggingConfig")
     @patch.dict(os.environ, {"MCP_DISABLE_CONSOLE_LOGGING": "TRUE"})
@@ -137,7 +139,7 @@ class TestLoggingSetup:
         _setup_logging("WARNING")
 
         mock_logging_config.setup.assert_called_once_with(
-            level="WARNING", format="json"
+            level="WARNING", format="json", minimal=False
         )
 
     @patch("qdrant_loader_mcp_server.cli.LoggingConfig")
@@ -255,28 +257,34 @@ class TestAsyncFunctions:
 
 
 class TestStdioHandler:
-    """Test stdio communication handler."""
+    """Test stdio communication handler.
+
+    Note: These tests use deferred imports pattern. Since handle_stdio() imports
+    SearchEngine, QueryProcessor, MCPHandler inside the function via run_in_executor,
+    we need to patch at the source module level.
+    """
 
     @pytest.mark.asyncio
     async def test_handle_stdio_initialization_error(self):
         """Test stdio handler with search engine initialization error."""
 
         # Create an async function that raises an exception
-        async def mock_initialize_error():
+        async def mock_initialize_error(*args, **kwargs):
             raise Exception("Init error")
 
         with (
             patch("qdrant_loader_mcp_server.cli.LoggingConfig") as mock_logging_config,
             patch(
-                "qdrant_loader_mcp_server.cli.SearchEngine"
+                "qdrant_loader_mcp_server.search.engine.SearchEngine"
             ) as mock_search_engine_class,
-            patch("qdrant_loader_mcp_server.cli.QueryProcessor"),
-            patch("qdrant_loader_mcp_server.cli.MCPHandler"),
+            patch("qdrant_loader_mcp_server.search.processor.QueryProcessor"),
+            patch("qdrant_loader_mcp_server.mcp.MCPHandler"),
             patch.dict(os.environ, {}, clear=True),
         ):
 
             mock_logger = MagicMock()
             mock_logging_config.get_logger.return_value = mock_logger
+            mock_logging_config.upgrade_from_minimal = MagicMock()
 
             # Mock search engine initialization failure
             mock_search_engine = MagicMock()
@@ -301,10 +309,10 @@ class TestStdioHandler:
         with (
             patch("qdrant_loader_mcp_server.cli.LoggingConfig") as mock_logging_config,
             patch(
-                "qdrant_loader_mcp_server.cli.SearchEngine"
+                "qdrant_loader_mcp_server.search.engine.SearchEngine"
             ) as mock_search_engine_class,
-            patch("qdrant_loader_mcp_server.cli.QueryProcessor"),
-            patch("qdrant_loader_mcp_server.cli.MCPHandler"),
+            patch("qdrant_loader_mcp_server.search.processor.QueryProcessor"),
+            patch("qdrant_loader_mcp_server.mcp.MCPHandler"),
             patch(
                 "qdrant_loader_mcp_server.cli.read_stdin_lines",
                 return_value=mock_stdin_lines(),
@@ -315,6 +323,7 @@ class TestStdioHandler:
 
             mock_logger = MagicMock()
             mock_logging_config.get_logger.return_value = mock_logger
+            mock_logging_config.upgrade_from_minimal = MagicMock()
 
             # Mock successful initialization
             mock_search_engine = MagicMock()
@@ -344,10 +353,10 @@ class TestStdioHandler:
         with (
             patch("qdrant_loader_mcp_server.cli.LoggingConfig") as mock_logging_config,
             patch(
-                "qdrant_loader_mcp_server.cli.SearchEngine"
+                "qdrant_loader_mcp_server.search.engine.SearchEngine"
             ) as mock_search_engine_class,
-            patch("qdrant_loader_mcp_server.cli.QueryProcessor"),
-            patch("qdrant_loader_mcp_server.cli.MCPHandler"),
+            patch("qdrant_loader_mcp_server.search.processor.QueryProcessor"),
+            patch("qdrant_loader_mcp_server.mcp.MCPHandler"),
             patch(
                 "qdrant_loader_mcp_server.cli.read_stdin_lines",
                 return_value=mock_stdin_lines(),
@@ -358,6 +367,7 @@ class TestStdioHandler:
 
             mock_logger = MagicMock()
             mock_logging_config.get_logger.return_value = mock_logger
+            mock_logging_config.upgrade_from_minimal = MagicMock()
 
             # Mock successful initialization
             mock_search_engine = MagicMock()
@@ -388,10 +398,10 @@ class TestStdioHandler:
         with (
             patch("qdrant_loader_mcp_server.cli.LoggingConfig") as mock_logging_config,
             patch(
-                "qdrant_loader_mcp_server.cli.SearchEngine"
+                "qdrant_loader_mcp_server.search.engine.SearchEngine"
             ) as mock_search_engine_class,
-            patch("qdrant_loader_mcp_server.cli.QueryProcessor"),
-            patch("qdrant_loader_mcp_server.cli.MCPHandler"),
+            patch("qdrant_loader_mcp_server.search.processor.QueryProcessor"),
+            patch("qdrant_loader_mcp_server.mcp.MCPHandler"),
             patch(
                 "qdrant_loader_mcp_server.cli.read_stdin_lines",
                 return_value=mock_stdin_lines(),
@@ -402,6 +412,7 @@ class TestStdioHandler:
 
             mock_logger = MagicMock()
             mock_logging_config.get_logger.return_value = mock_logger
+            mock_logging_config.upgrade_from_minimal = MagicMock()
 
             # Mock successful initialization
             mock_search_engine = MagicMock()
@@ -432,10 +443,12 @@ class TestStdioHandler:
         with (
             patch("qdrant_loader_mcp_server.cli.LoggingConfig") as mock_logging_config,
             patch(
-                "qdrant_loader_mcp_server.cli.SearchEngine"
+                "qdrant_loader_mcp_server.search.engine.SearchEngine"
             ) as mock_search_engine_class,
-            patch("qdrant_loader_mcp_server.cli.QueryProcessor"),
-            patch("qdrant_loader_mcp_server.cli.MCPHandler") as mock_mcp_handler_class,
+            patch("qdrant_loader_mcp_server.search.processor.QueryProcessor"),
+            patch(
+                "qdrant_loader_mcp_server.mcp.MCPHandler"
+            ) as mock_mcp_handler_class,
             patch(
                 "qdrant_loader_mcp_server.cli.read_stdin_lines",
                 return_value=mock_stdin_lines(),
@@ -446,6 +459,7 @@ class TestStdioHandler:
 
             mock_logger = MagicMock()
             mock_logging_config.get_logger.return_value = mock_logger
+            mock_logging_config.upgrade_from_minimal = MagicMock()
 
             # Mock successful initialization
             mock_search_engine = MagicMock()
@@ -539,7 +553,8 @@ class TestCLICommand:
         runner.invoke(cli, ["--log-level", "DEBUG"])
 
         # Verify setup was called with transport parameter (default is stdio)
-        mock_setup_logging.assert_called_once_with("DEBUG", "stdio")
+        # minimal=True is used for fast two-phase startup
+        mock_setup_logging.assert_called_once_with("DEBUG", "stdio", minimal=True)
         mock_load_config.assert_called_once()
         mock_new_event_loop.assert_called_once()
         mock_set_event_loop.assert_called_once_with(mock_loop)
