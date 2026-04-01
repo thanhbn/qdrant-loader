@@ -1,4 +1,7 @@
-"""Metadata extraction service for hybrid search results."""
+"""Metadata extraction service for hybrid search results.
+
+POC5: Enhanced to extract enrichment metadata from ingestion pipeline.
+"""
 
 from typing import Any
 
@@ -9,6 +12,7 @@ from .search_result_models import (
     ContentAnalysis,
     ConversionInfo,
     CrossReferenceInfo,
+    EnrichmentMetadata,
     HierarchyInfo,
     NavigationContext,
     ProjectInfo,
@@ -190,8 +194,48 @@ class MetadataExtractor:
             paragraph_count=content_analysis.get("paragraph_count"),
         )
 
+    def extract_enrichment_metadata(self, metadata: dict) -> EnrichmentMetadata | None:
+        """POC5: Extract enrichment metadata from document.
+
+        Handles entity and keyword enricher output from ingestion pipeline.
+
+        Args:
+            metadata: Document metadata
+
+        Returns:
+            EnrichmentMetadata object or None if no enrichment data available
+        """
+        enrichment_fields = [
+            "entity_types",
+            "entity_count",
+            "has_people",
+            "has_organizations",
+            "has_locations",
+            "keywords",
+            "keyword_list",
+            "keyword_count",
+            "top_keyword",
+        ]
+
+        if not any(metadata.get(field) for field in enrichment_fields):
+            return None
+
+        return EnrichmentMetadata(
+            entity_types=metadata.get("entity_types", {}),
+            entity_count=metadata.get("entity_count", 0),
+            has_people=metadata.get("has_people", False),
+            has_organizations=metadata.get("has_organizations", False),
+            has_locations=metadata.get("has_locations", False),
+            keywords=metadata.get("keywords", []),
+            keyword_list=metadata.get("keyword_list", []),
+            keyword_count=metadata.get("keyword_count", 0),
+            top_keyword=metadata.get("top_keyword"),
+        )
+
     def extract_semantic_analysis(self, metadata: dict) -> SemanticAnalysis | None:
         """Extract semantic analysis from document metadata.
+
+        POC5: Now includes enrichment metadata from ingestion pipeline.
 
         Args:
             metadata: Document metadata
@@ -200,8 +244,20 @@ class MetadataExtractor:
             SemanticAnalysis object or None if no semantic analysis available
         """
         semantic_fields = ["entities", "topics", "key_phrases", "pos_tags"]
+        enrichment_fields = [
+            "entity_types",
+            "keywords",
+            "keyword_list",
+            "entity_count",
+            "has_people",
+            "has_organizations",
+            "has_locations",
+        ]
 
-        if not any(metadata.get(field) for field in semantic_fields):
+        has_semantic = any(metadata.get(field) for field in semantic_fields)
+        has_enrichment = any(metadata.get(field) for field in enrichment_fields)
+
+        if not has_semantic and not has_enrichment:
             return None
 
         # Convert spaCy tuples to expected formats for Pydantic validation
@@ -210,11 +266,15 @@ class MetadataExtractor:
         key_phrases = self._process_key_phrases(metadata.get("key_phrases", []))
         pos_tags = self._process_pos_tags(metadata.get("pos_tags", []))
 
+        # POC5: Extract enrichment metadata
+        enrichment = self.extract_enrichment_metadata(metadata)
+
         return SemanticAnalysis(
             entities=entities,
             topics=topics,
             key_phrases=key_phrases,
             pos_tags=pos_tags,
+            enrichment=enrichment,
         )
 
     def extract_navigation_context(self, metadata: dict) -> NavigationContext | None:

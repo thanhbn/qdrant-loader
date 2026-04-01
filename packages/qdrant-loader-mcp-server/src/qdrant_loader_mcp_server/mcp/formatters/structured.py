@@ -3,6 +3,8 @@ Structured Result Formatters - Complex Data Structure Formatting.
 
 This module handles the creation of complex, structured result formats
 for MCP responses that require detailed organization and presentation.
+
+POC5: Enhanced to include enrichment metadata in structured outputs.
 """
 
 from typing import Any
@@ -24,12 +26,95 @@ class StructuredResultFormatters:
     """Handles structured result formatting operations."""
 
     @staticmethod
+    def _build_enrichment_section(result: HybridSearchResult) -> dict[str, Any] | None:
+        """POC5: Build enrichment section for a search result.
+
+        Args:
+            result: HybridSearchResult with potential enrichment data
+
+        Returns:
+            Enrichment dict or None if no enrichment data
+        """
+        # Get and validate enrichment data
+        keyword_list = getattr(result, "keyword_list", None)
+        entity_types = getattr(result, "entity_types", None)
+
+        # Ensure proper types
+        if not isinstance(keyword_list, list):
+            keyword_list = []
+        if not isinstance(entity_types, dict):
+            entity_types = {}
+
+        has_keywords = len(keyword_list) > 0
+        has_entities = len(entity_types) > 0
+
+        if not has_keywords and not has_entities:
+            return None
+
+        enrichment: dict[str, Any] = {}
+
+        # Keywords section
+        if has_keywords:
+            top_keyword = getattr(result, "top_keyword", None)
+            if not isinstance(top_keyword, str):
+                top_keyword = None
+            keywords_full = getattr(result, "keywords_full", None)
+            if not isinstance(keywords_full, list):
+                keywords_full = []
+
+            enrichment["keywords"] = {
+                "list": keyword_list[:10],  # Limit to 10 keywords in structured output
+                "top": top_keyword,
+                "count": len(keyword_list),
+            }
+
+            # Include top 5 keywords with scores if available
+            if keywords_full:
+                enrichment["keywords"]["top_with_scores"] = [
+                    {"word": kw.get("word", ""), "score": round(kw.get("score", 0), 4)}
+                    for kw in keywords_full[:5]
+                    if isinstance(kw, dict)
+                ]
+
+        # Entities section
+        if has_entities:
+            entity_count = getattr(result, "entity_count", 0)
+            if not isinstance(entity_count, int):
+                entity_count = 0
+
+            has_people = getattr(result, "has_people", False) is True
+            has_organizations = getattr(result, "has_organizations", False) is True
+            has_locations = getattr(result, "has_locations", False) is True
+
+            enrichment["entities"] = {
+                "types": {
+                    ent_type: entities[:5]  # Limit to 5 entities per type
+                    for ent_type, entities in entity_types.items()
+                    if isinstance(entities, list)
+                },
+                "type_counts": {
+                    ent_type: len(entities)
+                    for ent_type, entities in entity_types.items()
+                    if isinstance(entities, list)
+                },
+                "has_people": has_people,
+                "has_organizations": has_organizations,
+                "has_locations": has_locations,
+                "total_count": entity_count,
+            }
+
+        return enrichment
+
+    @staticmethod
     def create_structured_search_results(
         results: list[HybridSearchResult],
         query: str = "",
         max_results: int = 20,
     ) -> list[dict[str, Any]]:
-        """Create structured search results as a list of formatted results."""
+        """Create structured search results as a list of formatted results.
+
+        POC5: Now includes enrichment metadata when available.
+        """
         formatted_results: list[dict[str, Any]] = []
         for result in results[:max_results]:
             raw_text = getattr(result, "text", None)
@@ -40,52 +125,140 @@ class StructuredResultFormatters:
             else:
                 normalized_text = str(raw_text)
 
-            formatted_results.append(
-                {
-                    "document_id": getattr(result, "document_id", ""),
-                    "title": (
-                        result.get_display_title()
-                        if hasattr(result, "get_display_title")
+            formatted_result: dict[str, Any] = {
+                "document_id": getattr(result, "document_id", ""),
+                "title": (
+                    result.get_display_title()
+                    if hasattr(result, "get_display_title")
+                    else None
+                )
+                or getattr(result, "source_title", None)
+                or "Untitled",
+                "content": normalized_text,
+                "content_snippet": (
+                    normalized_text[:300] + "..."
+                    if len(normalized_text) > 300
+                    else normalized_text
+                ),
+                "source_type": getattr(result, "source_type", "unknown"),
+                "source_url": getattr(result, "source_url", None),
+                "file_path": getattr(result, "file_path", None),
+                "score": getattr(result, "score", 0.0),
+                "created_at": getattr(result, "created_at", None),
+                "updated_at": getattr(result, "updated_at", None),
+                "metadata": {
+                    "breadcrumb": getattr(result, "breadcrumb_text", None),
+                    "hierarchy_context": getattr(result, "hierarchy_context", None),
+                    "project_info": (
+                        result.get_project_info()
+                        if hasattr(result, "get_project_info")
                         else None
-                    )
-                    or getattr(result, "source_title", None)
-                    or "Untitled",
-                    "content": normalized_text,
-                    "content_snippet": (
-                        normalized_text[:300] + "..."
-                        if len(normalized_text) > 300
-                        else normalized_text
                     ),
-                    "source_type": getattr(result, "source_type", "unknown"),
-                    "source_url": getattr(result, "source_url", None),
+                    "project_id": (
+                        ""
+                        if getattr(result, "project_id", None) is None
+                        else str(getattr(result, "project_id", ""))
+                    ),
                     "file_path": getattr(result, "file_path", None),
-                    "score": getattr(result, "score", 0.0),
-                    "created_at": getattr(result, "created_at", None),
-                    "updated_at": getattr(result, "updated_at", None),
-                    "metadata": {
-                        "breadcrumb": getattr(result, "breadcrumb_text", None),
-                        "hierarchy_context": getattr(result, "hierarchy_context", None),
-                        "project_info": (
-                            result.get_project_info()
-                            if hasattr(result, "get_project_info")
-                            else None
-                        ),
-                        "project_id": (
-                            ""
-                            if getattr(result, "project_id", None) is None
-                            else str(getattr(result, "project_id", ""))
-                        ),
-                        "file_path": getattr(result, "file_path", None),
-                        "word_count": getattr(result, "word_count", None),
-                        "chunk_index": getattr(result, "chunk_index", None),
-                        "total_chunks": getattr(result, "total_chunks", None),
-                        "is_attachment": getattr(result, "is_attachment", False),
-                        "depth": FormatterUtils.extract_synthetic_depth(result),
-                        "has_children": FormatterUtils.extract_has_children(result),
-                    },
-                }
-            )
+                    "word_count": getattr(result, "word_count", None),
+                    "chunk_index": getattr(result, "chunk_index", None),
+                    "total_chunks": getattr(result, "total_chunks", None),
+                    "is_attachment": getattr(result, "is_attachment", False),
+                    "depth": FormatterUtils.extract_synthetic_depth(result),
+                    "has_children": FormatterUtils.extract_has_children(result),
+                },
+            }
+
+            # POC5: Add enrichment section if available
+            enrichment = StructuredResultFormatters._build_enrichment_section(result)
+            if enrichment:
+                formatted_result["enrichment"] = enrichment
+
+            formatted_results.append(formatted_result)
+
         return formatted_results
+
+    @staticmethod
+    def create_enrichment_summary(
+        results: list[HybridSearchResult],
+    ) -> dict[str, Any]:
+        """POC5: Create aggregated enrichment summary across all results.
+
+        Provides an overview of keywords and entities found across search results
+        for faceted navigation and analysis.
+
+        Args:
+            results: List of search results to summarize
+
+        Returns:
+            Dictionary with aggregated enrichment information
+        """
+        all_keywords: dict[str, int] = {}
+        all_entities: dict[str, set[str]] = {
+            "PERSON": set(),
+            "ORG": set(),
+            "GPE": set(),
+            "LOC": set(),
+            "FAC": set(),
+        }
+
+        docs_with_keywords = 0
+        docs_with_entities = 0
+
+        for result in results:
+            # Aggregate keywords - validate type
+            keyword_list = getattr(result, "keyword_list", None)
+            if not isinstance(keyword_list, list):
+                keyword_list = []
+            if keyword_list:
+                docs_with_keywords += 1
+                for kw in keyword_list:
+                    if isinstance(kw, str):
+                        all_keywords[kw] = all_keywords.get(kw, 0) + 1
+
+            # Aggregate entities - validate type
+            entity_types = getattr(result, "entity_types", None)
+            if not isinstance(entity_types, dict):
+                entity_types = {}
+            if entity_types:
+                docs_with_entities += 1
+                for ent_type, entities in entity_types.items():
+                    if ent_type in all_entities and isinstance(entities, list):
+                        all_entities[ent_type].update(
+                            e for e in entities if isinstance(e, str)
+                        )
+
+        # Sort keywords by frequency
+        top_keywords = sorted(all_keywords.items(), key=lambda x: -x[1])[:20]
+
+        return {
+            "top_keywords": [
+                {"keyword": kw, "frequency": freq} for kw, freq in top_keywords
+            ],
+            "entity_counts": {
+                "people": len(all_entities["PERSON"]),
+                "organizations": len(all_entities["ORG"]),
+                "locations": len(all_entities["GPE"]) + len(all_entities["LOC"]) + len(all_entities["FAC"]),
+            },
+            "entity_samples": {
+                "people": sorted(all_entities["PERSON"])[:10],
+                "organizations": sorted(all_entities["ORG"])[:10],
+                "locations": sorted(
+                    all_entities["GPE"] | all_entities["LOC"] | all_entities["FAC"]
+                )[:10],
+            },
+            "coverage": {
+                "documents_with_keywords": docs_with_keywords,
+                "documents_with_entities": docs_with_entities,
+                "total_documents": len(results),
+                "keyword_coverage_pct": round(
+                    docs_with_keywords / len(results) * 100, 1
+                ) if results else 0,
+                "entity_coverage_pct": round(
+                    docs_with_entities / len(results) * 100, 1
+                ) if results else 0,
+            },
+        }
 
     @staticmethod
     def create_structured_hierarchy_results(
@@ -119,7 +292,7 @@ class StructuredResultFormatters:
                 else:
                     normalized_text = str(raw_text)
 
-                doc_data = {
+                doc_data: dict[str, Any] = {
                     "document_id": getattr(result, "document_id", ""),
                     "title": (
                         result.get_display_title()
@@ -147,6 +320,11 @@ class StructuredResultFormatters:
                         "file_path": getattr(result, "file_path", None),
                     },
                 }
+
+                # POC5: Add enrichment to hierarchy documents
+                enrichment = StructuredResultFormatters._build_enrichment_section(result)
+                if enrichment:
+                    doc_data["enrichment"] = enrichment
 
                 if parent_id:
                     if parent_id not in child_map:

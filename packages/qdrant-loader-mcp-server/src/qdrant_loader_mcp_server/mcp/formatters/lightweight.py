@@ -3,6 +3,8 @@ Lightweight Result Formatters - Efficient Result Construction.
 
 This module handles the creation of lightweight, efficient result structures
 for MCP responses, optimizing for minimal data transfer and fast processing.
+
+POC5: Enhanced to include enrichment index for faceted navigation.
 """
 
 from typing import Any
@@ -13,6 +15,94 @@ from .utils import FormatterUtils
 
 class LightweightResultFormatters:
     """Handles lightweight result construction operations."""
+
+    @staticmethod
+    def create_lightweight_enrichment_index(
+        results: list[HybridSearchResult],
+    ) -> dict[str, Any]:
+        """POC5: Create lightweight enrichment index for filtering.
+
+        Aggregates all keywords and entity types across results for
+        faceted navigation and filtering.
+
+        Args:
+            results: List of search results to index
+
+        Returns:
+            Dictionary with keyword and entity indexes
+        """
+        all_keywords: dict[str, int] = {}
+        all_entities: dict[str, set[str]] = {
+            "people": set(),
+            "organizations": set(),
+            "locations": set(),
+        }
+        entity_type_mapping = {
+            "PERSON": "people",
+            "ORG": "organizations",
+            "GPE": "locations",
+            "LOC": "locations",
+            "FAC": "locations",
+        }
+
+        docs_with_keywords = 0
+        docs_with_entities = 0
+
+        for result in results:
+            # Aggregate keywords - validate type
+            keyword_list = getattr(result, "keyword_list", None)
+            if not isinstance(keyword_list, list):
+                keyword_list = []
+            if keyword_list:
+                docs_with_keywords += 1
+                for kw in keyword_list:
+                    if isinstance(kw, str):
+                        all_keywords[kw] = all_keywords.get(kw, 0) + 1
+
+            # Aggregate entities by type - validate type
+            entity_types = getattr(result, "entity_types", None)
+            if not isinstance(entity_types, dict):
+                entity_types = {}
+            if entity_types:
+                docs_with_entities += 1
+                for ent_type, entities in entity_types.items():
+                    category = entity_type_mapping.get(ent_type)
+                    if category and isinstance(entities, list):
+                        all_entities[category].update(
+                            e for e in entities if isinstance(e, str)
+                        )
+
+        # Sort keywords by frequency
+        sorted_keywords = sorted(all_keywords.items(), key=lambda x: -x[1])
+
+        return {
+            "keyword_index": {
+                "keywords": [kw for kw, _ in sorted_keywords[:50]],
+                "frequency": dict(sorted_keywords[:20]),
+                "total_unique": len(all_keywords),
+            },
+            "entity_index": {
+                "people": sorted(all_entities["people"])[:30],
+                "organizations": sorted(all_entities["organizations"])[:30],
+                "locations": sorted(all_entities["locations"])[:30],
+                "counts": {
+                    "people": len(all_entities["people"]),
+                    "organizations": len(all_entities["organizations"]),
+                    "locations": len(all_entities["locations"]),
+                },
+            },
+            "enrichment_coverage": {
+                "documents_with_keywords": docs_with_keywords,
+                "documents_with_entities": docs_with_entities,
+                "total_documents": len(results),
+                "keyword_coverage_pct": round(
+                    docs_with_keywords / len(results) * 100, 1
+                ) if results else 0,
+                "entity_coverage_pct": round(
+                    docs_with_entities / len(results) * 100, 1
+                ) if results else 0,
+            },
+        }
 
     @staticmethod
     def create_lightweight_similar_documents_results(

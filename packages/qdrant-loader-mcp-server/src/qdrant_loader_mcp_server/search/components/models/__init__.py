@@ -9,7 +9,7 @@ from .hybrid import HybridSearchResult, create_hybrid_search_result
 from .navigation import NavigationContext
 from .project import ProjectInfo
 from .section import SectionInfo
-from .semantic import SemanticAnalysis
+from .semantic import EnrichmentMetadata, SemanticAnalysis
 
 __all__ = [
     "BaseSearchResult",
@@ -19,6 +19,7 @@ __all__ = [
     "SectionInfo",
     "ContentAnalysis",
     "SemanticAnalysis",
+    "EnrichmentMetadata",
     "NavigationContext",
     "ChunkingContext",
     "ConversionInfo",
